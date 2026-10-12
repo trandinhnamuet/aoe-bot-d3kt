@@ -393,6 +393,7 @@ Người mới thường kích đời 3 ở phút 13–16.
 ### 3.8 Tường bằng nhà ("bo nhà")
 
 - **Bo theo địa hình (bạn chỉ ra 12/10/2026 23:00, đang thay thế vòng nhà):** vực, rừng, nước, tàn tích, mép bản đồ là tường có sẵn; chỉ xây BE để **nối các mảng địa hình đó với nhau**, không xây BE thành vòng tròn quanh nhà chính. Cài đặt: `walling.plan_cut` tìm **lát cắt nhỏ nhất** (max-flow/min-cut trên lưới ô, 4 hướng, không cắt góc) ngăn khu nhà (TC + BG + BS) với mọi ô cách TC ≥ 14 ô (hoặc 20 ô nếu rẻ hơn); mỗi ô cắt được phủ bằng móng 2×2; ô không đặt được nhà (khe 1 ô giữa hai rừng) không được cắt, nên đường cắt tự dịch tới chỗ đặt được; cắt lại với nhà đã đặt tới khi không còn đường ra. Ô chưa thám hiểm không được dùng làm tường cũng không được cắt. Mô phỏng 40 bản đồ có rừng: **kín 40/40, trung vị 12 nhà** (vòng cũ: 42 nhà, vẫn rò 1–3 chỗ).
+- **Học từ trận của bạn (13/10 02:00, bản ghi trận với 7 AI):** bạn bo ở **20–25 ô** từ nhà chính: mép bản đồ ↔ rừng bằng BE + chuồng ngựa, nhà lính ↔ rừng bằng chuỗi BE, BS + BE trong khe rừng; cổng là BE sát mép bản đồ cạnh chuồng ngựa, xoá rồi xây lại sau 4–34 s. → bot thử bán kính 14 / 26 / 40 và chọn lát cắt ít nhà nhất (bản đồ giống của bạn: bán kính 20 cần 20 nhà, 32–40 chỉ 5 nhà); "đã biết địa hình" = 90 % ô dọc đường cắt đã thám hiểm (không đòi cả đĩa); ô chưa thám hiểm vẫn cắt được, nhà ở đó chờ thám hiểm; vòng đã chốt mà không khép được nữa thì chọn lại. Arena wall4 (x2): bot chọn lại r=40 chỉ **8 nhà**, **kín lúc 11:30**, 9 lần mở/đóng cổng (mở 15–60 s).
 - **BB/BM dùng làm đoạn tường**: nhà chợ và chuồng ngựa đầu (phải xây để lên đời) đặt lên đường cắt (móng 3×3 che ≥ 2 ô cắt) thay cho 2 BE; nhà quân sau đó vẫn ở ngoài bo, sát mép khu kín về phía địch.
 - *Sửa 13/10 00:40 sau trận test dài của bạn:* vòng ruộng quanh BG (bán kính 6,5) từng bị coi là "không cắt được", với BG cách TC 8 ô nó vươn quá bán kính 14 nên lát cắt vô hạn → bot không bao giờ bo rộng, chỉ bo nhỏ (lại là vòng BE); nay vòng ruộng chỉ "đắt" chứ không cấm. Kế hoạch không có lát cắt không còn bị tính là "đã kín" (P3 báo kín với 0 nhà ở giây 71). Dân bị nhốt chỉ được mở cổng khi trạng thái kín là thật — nay đúng.
 - "Trong bo" = tập ô kín của kế hoạch (không còn là đĩa bán kính); nhà tường = BE đứng trên móng đã từng được lập kế hoạch; cổng (xoá BE cho dân/quân ra vào) giữ nguyên.
@@ -417,9 +418,12 @@ Người mới thường kích đời 3 ở phút 13–16.
 
 
 
+- **Câu voi / lùa hươu của người chơi (5 trận online 13/10, 4 người):** 38 voi bị giết, từ phát giáo đầu tới chết trung vị **27 s**, 11 phát, 4 dân quanh xác, chết cách nhà chính trung vị 3,8 ô (p90 53 ô = giết tại chỗ), dân mất máu trung vị 0. Hươu: dân tới 3–3,5 ô thì 66 % con nhảy trong 2 s; 51 % cú nhảy đưa nó gần nhà hơn; góc dân so với đường về nhà trung vị 81°.
+
 ### 3.8b Ruộng và nghiên cứu (13/10/2026, sau trận test của bạn)
 
 - **Ruộng:** 28 "dân ruộng" cho 10 ruộng xong, 18 móng ruộng dở → bảng phân công giới hạn dân ruộng = ruộng xong + móng đang xây + 2; dư thì sang gỗ/vàng. (Luật một dân một ruộng vẫn giữ.)
+- **Dành thực cho công nghệ (13/10 03:40):** trận thử 32 phút: 13 phút đời 3 chỉ 1 công nghệ dù có 1 879 vàng, vì BL và TC tiêu ngay từng 50–70 thực nên thực không bao giờ đủ 100–300 cho giáp/công ở BS. Nay ở đời 3, khi đã có ≥ 6 quân và không bị đánh, thực/vàng của công nghệ ưu tiên kế tiếp (nhà nghiên cứu đang rảnh) được **giữ lại**: ra ngựa, BY, cung và dân (từ dân thứ 35) chỉ dùng phần dư.
 - **Nghiên cứu:** cả trận 45 phút mỗi bot chỉ 1–11 công nghệ vì mỗi lúc chỉ cho một nghiên cứu cho cả làng, mỗi lần thử hỏng chặn 6 s, và trừ sẵn 120 thực + 140 vàng ngoài giá. Nay mỗi loại nhà một nghiên cứu, các loại chạy song song (BS: giáp/công, BG: nông nghiệp, chợ: xe…); dự trữ chỉ 60–100 thực, 40–100 vàng (ít hơn khi quân đã đủ 12). Thứ tự ưu tiên: bánh xe, cung, công cụ, giáp ngựa, gỗ, vàng, thuần hoá, giáp vảy ngựa, luyện kim…
 
 ### 3.9b An toàn tiến trình game (13/10/2026)

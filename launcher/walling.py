@@ -461,12 +461,22 @@ def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored
                     return False
         return True
 
+    def fits(x0, y0):
+        """The footprint fits the ground (explored or not: a footprint on unexplored ground waits)."""
+        for yy in range(y0, y0 + size):
+            for xx in range(x0, x0 + size):
+                if not work.passable(xx, yy) or uncuttable(xx, yy):
+                    return False
+        return True
+
     def coverable(x, y):
         """Some size x size footprint containing (x, y) fits: a 1-tile gap between two forests is
-        the cheapest cut but no house fits there - such tiles are never cut."""
+        the cheapest cut but no house fits there - such tiles are never cut. (Unexplored ground
+        counts as coverable: treating it as uncoverable made every cut infinite while a lane of
+        fog led out - wall3: a 'chosen' ring with 0 slots that never sealed.)"""
         for ox in range(-(size - 1), 1):
             for oy in range(-(size - 1), 1):
-                if allowed(x + ox, y + oy):
+                if fits(x + ox, y + oy):
                     return True
         return False
 

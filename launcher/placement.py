@@ -34,7 +34,9 @@ class Grid:
     def free(self, x0, y0, size, margin=0):
         for yy in range(y0 - margin, y0 + size + margin):
             for xx in range(x0 - margin, x0 + size + margin):
-                if not (1 <= xx < self.W - 1 and 1 <= yy < self.H - 1):
+                # (the outermost row / column is buildable: the user's wall houses stand on x = 0, and the
+                #  wall cut often ends on the map edge - load2: every last slot there, never built)
+                if not (0 <= xx < self.W and 0 <= yy < self.H):
                     return False
                 if self.occ[yy * self.W + xx]:
                     return False

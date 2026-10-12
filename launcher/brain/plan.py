@@ -118,9 +118,16 @@ def demands(b):
     else:
         stables = max(1, len(b.complete(gs.STABLE)))
         gold_want = min(2 + 5 * stables, max(2, (n - 10) // 2))     # ~5 miners per stable (knowledge.py)
+        if b.res(gs.GOLD) > 600:
+            # gold piling up while food is the bottleneck (tech2: 17 miners, 1 965 gold banked, 13 farmers,
+            # food at 30 - no tech, 4 cavalry): the miners go farming until the bank is spent
+            gold_want = min(gold_want, 4)
+        wood_want = b.wood_target()
+        if b.res(gs.WOOD) > 600:
+            wood_want = min(wood_want, 4)
         if b.known_gold():
             out.append(Demand("gold", gold_want, gold_want, 3, ok=lambda i, v: i >= 6))
-        out.append(Demand("wood", b.wood_target(), b.wood_target(), 4, ok=lambda i, v: i >= 6))
+        out.append(Demand("wood", wood_want, wood_want, 4, ok=lambda i, v: i >= 6))
 
     # 5. extra berry capacity (a second patch) and farms
     if berries and cap > 6:
@@ -129,7 +136,8 @@ def demands(b):
         # one farmer per farm plus a few to finish / start the next ones - never a crowd on the same farms
         # (the user, 13/10: far too many villagers on the same farms; 28 "farmers" for 10 farms)
         n_farm = len(b.complete(gs.FARM))
-        out.append(Demand("farm", n_farm, n_farm + len(b.pending_of(gs.FARM)) + 2, 9))
+        extra = 4 if (stage >= 3 and b.res(gs.FOOD) < 150) else 2     # (food is the Bronze bottleneck)
+        out.append(Demand("farm", n_farm, n_farm + len(b.pending_of(gs.FARM)) + extra, 9))
 
     # 6. whoever is left: food first (hunt sites with room were listed above); in stage 1 with no food
     #    work left, scouts go and find some (players never put more than ~7 on wood); else wood

@@ -26,3 +26,6 @@ hook/*.lib
 AoE-HD/
 *.EXE
 !hook/dplaunch.exe
+
+# data learned from recordings of online games: holds other players' nicknames - kept local
+tools/learned/

@@ -32,6 +32,13 @@ STILL_SAMPLES = 20       # 0.8 s standing still before a flee counts as a new on
 
 
 def records(path):
+    """Every record, any format (format 3 packs them in lzma blocks: mapcap's reader)."""
+    try:
+        from mapcap.rawrec import iter_records
+        yield from iter_records(path)
+        return
+    except ImportError:
+        pass
     with open(path, "rb") as f:
         if f.read(len(MAGIC)) != MAGIC:
             return

@@ -29,6 +29,7 @@ D3KT rules (until the enemy breaks one): no towers/walls/tower tech, no attack b
   Enemy soldiers attacking us may always be fought back; a lone enemy scout is attacked by every
   villager within 5 tiles of where it struck, until it is more than 4 tiles from that spot.
 """
+import collections
 import math
 import os
 import time
@@ -314,6 +315,12 @@ class Brain:
 
     def res(self, i):
         return self.s.res[i]
+
+    def can_afford_unit(self, food=0, wood=0, gold=0, stone=0):
+        """can_afford for a unit: what the next technology needs stays in the bank (research_plan)."""
+        r = getattr(self, "research_reserve", None) or {}
+        return self.can_afford(food=food + r.get("food", 0), wood=wood + r.get("wood", 0),
+                               gold=gold + r.get("gold", 0), stone=stone)
 
     def can_afford(self, food=0, wood=0, gold=0, stone=0):
         return (self.res(gs.FOOD) >= food and self.res(gs.WOOD) >= wood and
@@ -1042,25 +1049,39 @@ class Brain:
         explored = lambda x, y: bool(self.s.explored(x, y))   # noqa: E731
         # the user: the wall uses the terrain (forest, cliffs, water, ruins, the map edge) and houses only
         # close the gaps - the cheapest cut between the town and the field, never a ring on a disc
-        for R in (14, 20):
-            if any(math.hypot(ax - tc.x, ay - tc.y) > R - 3 for ax, ay in anchors_needed):
-                continue
-            p = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_needed, R, keep_clear=kc, uncuttable_rects=refused,
-                                 explored=explored)
-            cost = len(p.slots) + 3 * len(p.leaks) + (10 ** 5 if p.flow >= walling.INF else 0)
-            if best_wide is None or cost < best_wide[0]:
-                best_wide = (cost, p)
+        # (the user walls 20-25 tiles out, along the forest lines and the map edge, recording 23:51: the
+        #  cheapest cut is often the far one through narrow forest gaps - every radius is tried and the
+        #  one with the fewest houses wins)
+        # (cost: a plan_cut is 0.2-0.6 s of Python; 3 radii + 2 small cuts every 20 s were 1.5 s a tick
+        #  with 4 bots - load1. Before the ring is chosen: ONE radius per call, round robin, the best of
+        #  the last three kept; once chosen: only that ring, and the small cuts never)
+        cands = self.__dict__.setdefault("_wall_cands", {})
+        if getattr(self, "wall_fixed_R", None) is None:
+            radii = [R for R in (14, 26, 40) if not any(math.hypot(ax - tc.x, ay - tc.y) > R - 3 for ax, ay in anchors_needed)]
+            if radii:
+                k = getattr(self, "_wall_rr", 0) % len(radii)
+                self._wall_rr = k + 1
+                R = radii[k]
+                p = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_needed, R, keep_clear=kc, uncuttable_rects=refused,
+                                     explored=explored)
+                cands[R] = (len(p.slots) + 3 * len(p.leaks) + (10 ** 5 if p.flow >= walling.INF else 0), p, t)
+            for R, c in list(cands.items()):
+                if t - c[2] > 80 or R not in radii:
+                    del cands[R]                     # (a stale candidate: the town changed since)
+            if cands:
+                best_wide = min(cands.values(), key=lambda c: c[0])[:2]
         small = []
-        # (the small rings are terrain-following cuts too: no ring of houses round the farms either)
-        for pit in self.any_of(gs.STORAGE_PIT)[:1]:
-            sp = walling.plan_cut(self.pm, (pit.x, pit.y), [], 6, keep_clear=[(pit.x, pit.y, 2.6)], explored=explored)
-            sp.mode = "small-wood"
-            small.append(sp)
-        farm_anchor = self.any_of(gs.GRANARY)[:1] or [tc]
-        for fa in farm_anchor:
-            sp = walling.plan_cut(self.pm, (fa.x, fa.y), [], 8, keep_clear=[(fa.x, fa.y, 1.5 + FARM_GAP + 3.2)], explored=explored)
-            sp.mode = "small-farm"
-            small.append(sp)
+        if getattr(self, "wall_fixed_R", None) is None:
+            # (the small rings are terrain-following cuts too: no ring of houses round the farms either)
+            for pit in self.any_of(gs.STORAGE_PIT)[:1]:
+                sp = walling.plan_cut(self.pm, (pit.x, pit.y), [], 6, keep_clear=[(pit.x, pit.y, 2.6)], explored=explored)
+                sp.mode = "small-wood"
+                small.append(sp)
+            farm_anchor = self.any_of(gs.GRANARY)[:1] or [tc]
+            for fa in farm_anchor:
+                sp = walling.plan_cut(self.pm, (fa.x, fa.y), [], 8, keep_clear=[(fa.x, fa.y, 1.5 + FARM_GAP + 3.2)], explored=explored)
+                sp.mode = "small-farm"
+                small.append(sp)
         houses = len(self.any_of(gs.HOUSE))
         pop_houses_left = max(0, (self.pop_limit - 4) // 4 - houses)
         budget = pop_houses_left + max(0, int(self.res(gs.WOOD)) - 150) // 30
@@ -1068,16 +1089,18 @@ class Brain:
         wide_cost = best_wide[0] if best_wide else 10 ** 6
         known = False
         if best_wide:
-            R = best_wide[1].radius + 3
-            tot = seen = 0
-            for yy in range(int(tc.y - R), int(tc.y + R) + 1, 2):
-                for xx in range(int(tc.x - R), int(tc.x + R) + 1, 2):
-                    if not (0 <= xx < self.r.W and 0 <= yy < self.r.H):
-                        continue                     # (a TC at the map edge: off-map tiles never count)
-                    if (xx - tc.x) ** 2 + (yy - tc.y) ** 2 <= R * R:
-                        tot += 1
-                        seen += self.s.explored(xx, yy)
-            known = tot and seen >= 0.6 * tot       # wide once most of the terrain around is known
+            # known = the ground along the cut (where the houses go and the terrain they lean on) is
+            # explored - the whole disc of a 40-tile ring never is
+            cut_tiles = getattr(best_wide[1], "cut", None) or []
+            ring = set()
+            for (xx, yy) in cut_tiles:
+                for dy in (-2, 0, 2):
+                    for dx in (-2, 0, 2):
+                        if 0 <= xx + dx < self.r.W and 0 <= yy + dy < self.r.H:
+                            ring.add((xx + dx, yy + dy))
+            tot = len(ring)
+            seen = sum(1 for (xx, yy) in ring if self.s.explored(xx, yy))
+            known = tot and seen >= 0.9 * tot
             if t - getattr(self, "_known_say", -999) > 120:
                 self._known_say = t
                 bw = best_wide[1]
@@ -1090,12 +1113,28 @@ class Brain:
         # 60 % known) and its radius is kept for good: re-planned every 20 s only for the openings
         # that are still uncovered (gate3: the plan flipped wide / small as costs changed, never sealed)
         fixed_R = getattr(self, "wall_fixed_R", None)
-        if fixed_R is None and best_wide and known and len(best_wide[1].leaks) <= 4 and wide_cost <= min(budget, 44):
+        all_tried = fixed_R is not None or len(self.__dict__.get("_wall_cands", {})) >= 3 or             len(self.__dict__.get("_wall_cands", {})) >= len([R for R in (14, 26, 40)
+                                                              if not any(math.hypot(ax - tc.x, ay - tc.y) > R - 3 for ax, ay in anchors_needed)])
+        if fixed_R is None and best_wide and known and all_tried and len(best_wide[1].leaks) <= 4 and wide_cost <= min(budget, 44):
             self.wall_fixed_R = fixed_R = best_wide[1].radius
             self.say("wall: wide ring r=%d chosen for good (%d houses)" % (fixed_R, len(best_wide[1].slots)))
         if fixed_R is not None:
-            same = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_needed, fixed_R, keep_clear=kc, uncuttable_rects=refused,
-                                    explored=explored)
+            r0 = int(fixed_R) + 3
+            sig = (hash(bytes(self.pm.blk[max(0, int(tc.y) - r0) * self.pm.W:min(self.pm.H, int(tc.y) + r0 + 1) * self.pm.W])),
+                   tuple(refused), int(sum(1 for (x, y) in getattr(self, "_wall_cut_tiles", ()) if self.s.explored(x, y))))
+            prev = getattr(self, "_wall_same", None)
+            if prev is not None and prev[0] == sig and prev[1].radius == fixed_R:
+                same = prev[1]                       # nothing changed round the town: the same plan
+            else:
+                same = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_needed, fixed_R, keep_clear=kc, uncuttable_rects=refused,
+                                        explored=explored)
+                self._wall_same = (sig, same)
+                self._wall_cut_tiles = list(getattr(same, "cut", []))
+            if same.flow >= walling.INF:
+                # the chosen ring cannot be closed any more (refused slots, new buildings): choose again
+                self.say("wall: ring r=%d cannot be closed any more - choosing again" % fixed_R)
+                self.wall_fixed_R = fixed_R = None
+                same = best_wide[1] if best_wide and best_wide[1].flow < walling.INF else same
             mode, plans = "wide", [same]
         elif best_wide and known and wide_cost <= min(budget, 34):
             # (a threat no longer shrinks the plan to the small rings: enemy_threat() is true for the
@@ -1480,7 +1519,8 @@ class Brain:
         if self.res(gs.HEADROOM) < 1:
             self.tc_idle("pop")
             return
-        if self.can_afford(food=self.vil_cost):
+        if (self.can_afford_unit(food=self.vil_cost) if (self.age >= 3 and len(self.s.villagers) >= 35)
+                else self.can_afford(food=self.vil_cost)):
             self.g.train(tc, gs.VILLAGER)
             self.last_train = t
             self.trained_tick = self.ticks
@@ -1775,14 +1815,13 @@ class Brain:
         if not force and not self.idle(v) and (on_farm or building or self.recent(v.id, ("farmchk",), within=5)):
             return
         self.mark([v], ("farmchk",))
-        taken = set()
-        for o in self.s.villagers:                   # anyone working a farm (builders farm it too)
-            if o.id != v.id:
-                act = self.r.action(o)
-                if act and act[1]:
-                    taken.add(act[1])
+        # who works which target, read ONCE per tick (it was read for every villager by every farmer:
+        # ~14 000 memory reads a tick with 60 villagers - half of a 1-4 s tick in the user's 1v7)
+        occ = self.target_counts()
         act = self.r.action(v)
-        if act and act[1] and any(f.ptr == act[1] for f in farms) and                 sum(1 for o in self.s.villagers if o.id != v.id and (self.r.action(o) or (0, 0))[1] == act[1]) == 0:
+        mine = act[1] if act and act[1] else None
+        taken = {ptr for ptr, n in occ.items() if n - (1 if ptr == mine else 0) > 0}
+        if mine and any(f.ptr == mine for f in farms) and occ.get(mine, 0) - 1 == 0:
             return                                   # already alone on its farm
         free = [f for f in farms if f.ptr not in taken and f.amount > 0]
         if free:
@@ -1800,6 +1839,20 @@ class Brain:
                 self.farms_built = getattr(self, "farms_built", 0) + 1
                 return
         return self.work_wood(v)
+
+    def target_counts(self):
+        """{target ptr: number of our villagers whose current action targets it}, once per snapshot."""
+        key = id(self.s)
+        cache = getattr(self, "_tc_cache", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        occ = collections.Counter()
+        for o in self.s.villagers:
+            a = self.r.action(o)
+            if a and a[1]:
+                occ[a[1]] += 1
+        self._tc_cache = (key, occ)
+        return occ
 
     def farm_spot(self, v):
         """A farm one house foundation (2 tiles) away from a granary or the TC, reachable by a short
@@ -3532,7 +3585,7 @@ class Brain:
             unit_t = gs.CAMEL if A["pick"] == "camel" else gs.CAVALRY
             if self.age < 3:
                 unit_t = gs.SCOUT
-            if self.can_afford(food=70, gold=80) or (unit_t == gs.SCOUT and self.can_afford(food=100)):
+            if self.can_afford_unit(food=70, gold=80) or (unit_t == gs.SCOUT and self.can_afford(food=100)):
                 self.g.train(b, unit_t)
         for b in self.complete(gs.BARRACKS):
             if self.rules_broken and not self.r.producing(b) and self.can_afford(food=50):
@@ -3540,7 +3593,7 @@ class Brain:
         A = self.tactics
         if A and A.get("want_academy"):
             for b in self.complete(gs.ACADEMY):
-                if not self.r.producing(b) and self.can_afford(food=60 + 50, gold=40 + 40):
+                if not self.r.producing(b) and self.can_afford_unit(food=60 + 50, gold=40 + 40):
                     self.g.train(b, gs.HOPLITE)
                     if self.now() - getattr(self, "_acad_say", 0) > 60:
                         self._acad_say = self.now()
@@ -3552,7 +3605,7 @@ class Brain:
             utype, food, wood = {"chariot_archer": (gs.CHARIOT_ARCHER, 70, 40),
                                  "improved_bowman": (gs.IMPROVED_BOWMAN, 40, 20)}.get(ranged, (gs.BOWMAN, 40, 20))
             for b in self.complete(gs.ARCHERY_RANGE):
-                if not self.r.producing(b) and self.can_afford(food=food + 50, wood=wood + 30):
+                if not self.r.producing(b) and self.can_afford_unit(food=food + 50, wood=wood + 30):
                     self.g.train(b, utype)
                     if self.now() - getattr(self, "_rng_say", 0) > 60:
                         self._rng_say = self.now()
@@ -3629,6 +3682,19 @@ class Brain:
         avail = [tid for tid in avail if tid in K.TECHS]    # (states 1 of pseudo-techs: buildings, civ bonuses)
         order = [tid for tid in K.TECH_PRIORITY if tid in avail] + [tid for tid in avail if tid not in K.TECH_PRIORITY]
         army_full = len(self.military()) >= 12
+        # the food / gold set aside for the first tech in the order whose building is free: the stables and
+        # the TC spend every 50-70 food at once, so in Bronze the food never reached a tech's 100-300
+        # (tech1: 1 tech in 13 minutes of Bronze with 1 900 gold in the bank) - units wait for it now
+        self.research_reserve = {}
+        if self.age >= 3 and (len(self.military()) >= 3 or self.res(gs.GOLD) > 500) and not getattr(self, "attackers", None):
+            for tid in order:
+                name, btype, _secs, cost, _req = K.TECHS[tid]
+                if btype in busy_types or self._rp_fail.get(tid, 0) >= 4:
+                    continue
+                if not [b for b in self.complete(btype) if not self.r.producing(b)]:
+                    continue
+                self.research_reserve = dict(cost)
+                break
         for tid in order:
             tries = self._rp_fail.get(tid, 0)
             if tries >= 4 and t - self._rp_fail_t.get(tid, 0) < 120:

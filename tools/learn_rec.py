@@ -37,6 +37,13 @@ MILITARY = {299: "scout", 37: "cavalry", 338: "camel", 41: "chariot", 4: "archer
 
 
 def records(path):
+    """Every record of a recording, any format (format 3 packs them in lzma blocks: mapcap's reader)."""
+    try:
+        from mapcap.rawrec import iter_records
+        yield from iter_records(path)
+        return
+    except ImportError:
+        pass
     with open(path, "rb") as f:
         if f.read(len(MAGIC)) != MAGIC:
             return
