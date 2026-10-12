@@ -1,0 +1,40 @@
+// D3KT - Doi 3 khong thanh
+// Luat: khong xay thanh/choi, khong nghien cuu thanh/choi,
+//       truoc doi 3 chi xin dung 1 ngua do (scout), khong tan cong truoc doi 3.
+// Nha E, kho BG, kho BS do SN tu dong xay (xem D3KT.per).
+//
+//ID       Description          Qty    Parent  Retrains
+B109      Town_Center1         1      -1
+U83       Man                  22     109
+B68       Granary1             1      -1
+B103      Storage_Pit1         1      -1
+
+C101    Tool_Age               1      109
+B84       Market1              1      -1
+B101      Stable1              1      -1
+B50       Farm                 2      -1
+R107    Wood_Working           1      84
+T299      Soldier-Scout        1      101     1
+B50       Farm                 2      -1
+
+C102    Bronze_Age             1      109
+B50       Farm                 2      -1
+U37       Soldier-Cavalry1     2      101
+U83       Man                  2      109
+B101      Stable1              1      -1
+U338      Soldier-Camel        2      101
+B50       Farm                 2      -1
+R28     Wheel                  1      84
+U37       Soldier-Cavalry1     2      101
+U83       Man                  2      109
+B50       Farm                 2      -1
+U338      Soldier-Camel        2      101
+B101      Stable1              1      -1
+R45     Scale_Armor_-_Cavalry  1      103
+U37       Soldier-Cavalry1     4      101
+B50       Farm                 2      -1
+R31     Plow                   1      84
+U338      Soldier-Camel        4      101
+B101      Stable1              1      -1
+B50       Farm                 2      -1
+U37       Soldier-Cavalry1     100    101

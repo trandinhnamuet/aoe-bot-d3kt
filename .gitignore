@@ -1,0 +1,28 @@
+# environments / build output
+.venv/
+build/
+dist/
+__pycache__/
+*.pyc
+*.spec
+
+# logs, run state, local data
+*.log
+*.pid
+tools/*pids.txt
+tools/pids.txt
+tools/reveal_cand.txt
+tools/arena/
+tools/*.orig
+tools/*.orig.cfg
+launcher/rl/policies/
+launcher/d3kt_v1_backup.py
+
+# debug symbols / import libs of the hook (the .dll / .exe stay: build.py bundles them)
+hook/*.pdb
+hook/*.lib
+
+# never the game itself (copyrighted): put your own AoE-HD folder next to AoESolo.exe
+AoE-HD/
+*.EXE
+!hook/dplaunch.exe

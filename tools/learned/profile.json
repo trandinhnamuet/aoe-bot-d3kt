@@ -1,0 +1,283 @@
+{
+ "n_players": 80,
+ "minutes": {
+  "0": {
+   "vil": 3.5,
+   "res_food": 50.0,
+   "res_wood": 187.5,
+   "berry": 0.0,
+   "hunt": 0.0,
+   "wood": 0.0,
+   "build": 0.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 2.5,
+   "hunt_dist_x10": null
+  },
+  "1": {
+   "vil": 6.0,
+   "res_food": 5.0,
+   "res_wood": 50.0,
+   "berry": 5.0,
+   "hunt": 0.0,
+   "wood": 0.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": null
+  },
+  "2": {
+   "vil": 8.0,
+   "res_food": 30.0,
+   "res_wood": 20.0,
+   "berry": 6.0,
+   "hunt": 0.0,
+   "wood": 1.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 17.6
+  },
+  "3": {
+   "vil": 11.0,
+   "res_food": 38.0,
+   "res_wood": 20.0,
+   "berry": 6.0,
+   "hunt": 0.0,
+   "wood": 3.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 14.0
+  },
+  "4": {
+   "vil": 14.0,
+   "res_food": 41.0,
+   "res_wood": 63.5,
+   "berry": 6.0,
+   "hunt": 1.0,
+   "wood": 6.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 5.1
+  },
+  "5": {
+   "vil": 17.0,
+   "res_food": 50.0,
+   "res_wood": 99.0,
+   "berry": 6.0,
+   "hunt": 3.0,
+   "wood": 6.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 3.6
+  },
+  "6": {
+   "vil": 19.0,
+   "res_food": 60.5,
+   "res_wood": 75.0,
+   "berry": 6.0,
+   "hunt": 5.0,
+   "wood": 7.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 1.0,
+   "hunt_dist_x10": 3.3
+  },
+  "7": {
+   "vil": 22.0,
+   "res_food": 110.0,
+   "res_wood": 135.5,
+   "berry": 6.0,
+   "hunt": 7.0,
+   "wood": 7.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 1.0,
+   "hunt_dist_x10": 4.0
+  },
+  "8": {
+   "vil": 24.0,
+   "res_food": 227.5,
+   "res_wood": 200.0,
+   "berry": 5.0,
+   "hunt": 9.0,
+   "wood": 7.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 6.4
+  },
+  "9": {
+   "vil": 25.0,
+   "res_food": 260.5,
+   "res_wood": 289.0,
+   "berry": 6.0,
+   "hunt": 10.0,
+   "wood": 6.0,
+   "build": 0.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 22.8
+  },
+  "10": {
+   "vil": 25.0,
+   "res_food": 467.0,
+   "res_wood": 324.5,
+   "berry": 7.0,
+   "hunt": 9.0,
+   "wood": 6.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 28.0
+  },
+  "11": {
+   "vil": 25.0,
+   "res_food": 579.0,
+   "res_wood": 287.0,
+   "berry": 6.0,
+   "hunt": 8.0,
+   "wood": 6.0,
+   "build": 1.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 32.4
+  },
+  "12": {
+   "vil": 25.0,
+   "res_food": 242.0,
+   "res_wood": 207.0,
+   "berry": 6.0,
+   "hunt": 7.0,
+   "wood": 7.0,
+   "build": 2.0,
+   "farm": 0.0,
+   "gold": 0.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 32.9
+  },
+  "13": {
+   "vil": 25.0,
+   "res_food": 201.0,
+   "res_wood": 222.5,
+   "berry": 5.0,
+   "hunt": 4.0,
+   "wood": 7.0,
+   "build": 2.0,
+   "farm": 0.0,
+   "gold": 3.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 32.9
+  },
+  "14": {
+   "vil": 24.0,
+   "res_food": 205.5,
+   "res_wood": 233.5,
+   "berry": 2.5,
+   "hunt": 1.0,
+   "wood": 7.0,
+   "build": 2.0,
+   "farm": 0.0,
+   "gold": 4.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 36.5
+  },
+  "15": {
+   "vil": 24.0,
+   "res_food": 157.0,
+   "res_wood": 254.0,
+   "berry": 0.0,
+   "hunt": 0.0,
+   "wood": 9.0,
+   "build": 2.0,
+   "farm": 1.0,
+   "gold": 4.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 39.4
+  },
+  "16": {
+   "vil": 24.0,
+   "res_food": 136.5,
+   "res_wood": 249.0,
+   "berry": 0.0,
+   "hunt": 0.0,
+   "wood": 8.0,
+   "build": 2.0,
+   "farm": 2.0,
+   "gold": 4.0,
+   "idle/walk": 0.0,
+   "hunt_dist_x10": 39.5
+  }
+ },
+ "milestones": {
+  "tool_click": {
+   "p10": 491,
+   "median": 534.5,
+   "p90": 624
+  },
+  "bronze_click": {
+   "p10": 667,
+   "median": 716,
+   "p90": 802
+  },
+  "vil_at_tool": {
+   "p10": 23,
+   "median": 25.0,
+   "p90": 26
+  },
+  "tool_to_bronze": {
+   "p10": 154,
+   "median": 174,
+   "p90": 222
+  },
+  "granary_1": {
+   "p10": 32,
+   "median": 45.0,
+   "p90": 57
+  },
+  "pit_1": {
+   "p10": 290,
+   "median": 334.0,
+   "p90": 400
+  },
+  "pit_2": {
+   "p10": 405,
+   "median": 502,
+   "p90": 677
+  },
+  "granary_2": {
+   "p10": 415,
+   "median": 480,
+   "p90": 617
+  },
+  "house_2": {
+   "p10": 67,
+   "median": 72.0,
+   "p90": 82
+  },
+  "market": {
+   "p10": 631,
+   "median": 682,
+   "p90": 757
+  },
+  "stable": {
+   "p10": 627,
+   "median": 674.5,
+   "p90": 763
+  }
+ }
+}
