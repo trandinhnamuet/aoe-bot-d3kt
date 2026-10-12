@@ -1057,12 +1057,16 @@ class Brain:
         #  the last three kept; once chosen: only that ring, and the small cuts never)
         cands = self.__dict__.setdefault("_wall_cands", {})
         if getattr(self, "wall_fixed_R", None) is None:
-            radii = [R for R in (14, 26, 40) if not any(math.hypot(ax - tc.x, ay - tc.y) > R - 3 for ax, ay in anchors_needed)]
+            # (a pit / granary is enclosed only when it is inside the radius: a far pit at a remote wood
+            #  line or mine is an outpost - tech3: the first pit 37+ tiles out ruled every radius out and
+            #  no wide wall was ever planned again)
+            radii = [14, 26, 40]
             if radii:
                 k = getattr(self, "_wall_rr", 0) % len(radii)
                 self._wall_rr = k + 1
                 R = radii[k]
-                p = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_needed, R, keep_clear=kc, uncuttable_rects=refused,
+                anchors_R = [(ax, ay) for ax, ay in anchors_needed if math.hypot(ax - tc.x, ay - tc.y) <= R - 3]
+                p = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_R, R, keep_clear=kc, uncuttable_rects=refused,
                                      explored=explored)
                 cands[R] = (len(p.slots) + 3 * len(p.leaks) + (10 ** 5 if p.flow >= walling.INF else 0), p, t)
             for R, c in list(cands.items()):
@@ -1113,8 +1117,7 @@ class Brain:
         # 60 % known) and its radius is kept for good: re-planned every 20 s only for the openings
         # that are still uncovered (gate3: the plan flipped wide / small as costs changed, never sealed)
         fixed_R = getattr(self, "wall_fixed_R", None)
-        all_tried = fixed_R is not None or len(self.__dict__.get("_wall_cands", {})) >= 3 or             len(self.__dict__.get("_wall_cands", {})) >= len([R for R in (14, 26, 40)
-                                                              if not any(math.hypot(ax - tc.x, ay - tc.y) > R - 3 for ax, ay in anchors_needed)])
+        all_tried = fixed_R is not None or len(self.__dict__.get("_wall_cands", {})) >= 3
         if fixed_R is None and best_wide and known and all_tried and len(best_wide[1].leaks) <= 4 and wide_cost <= min(budget, 44):
             self.wall_fixed_R = fixed_R = best_wide[1].radius
             self.say("wall: wide ring r=%d chosen for good (%d houses)" % (fixed_R, len(best_wide[1].slots)))
@@ -1126,7 +1129,8 @@ class Brain:
             if prev is not None and prev[0] == sig and prev[1].radius == fixed_R:
                 same = prev[1]                       # nothing changed round the town: the same plan
             else:
-                same = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_needed, fixed_R, keep_clear=kc, uncuttable_rects=refused,
+                anchors_R = [(ax, ay) for ax, ay in anchors_needed if math.hypot(ax - tc.x, ay - tc.y) <= fixed_R - 3]
+                same = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_R, fixed_R, keep_clear=kc, uncuttable_rects=refused,
                                         explored=explored)
                 self._wall_same = (sig, same)
                 self._wall_cut_tiles = list(getattr(same, "cut", []))
@@ -1281,9 +1285,29 @@ class Brain:
                 for (x0, y0, sz) in p.slots:
                     if sz != 2:
                         continue
+                    if not self.footprint_ok(gs.HOUSE, x0, y0) and self.explored_rect(x0, y0, 2):
+                        # the placement grid refuses a slot the cut planner thinks is free (forest
+                        # terrain, a decoration, a unit parked there...): after ~2 minutes of that the
+                        # cut goes round it (tech3: one slot skipped silently for 25 minutes)
+                        ff = self.__dict__.setdefault("slot_ffail", {})
+                        ff[(x0, y0)] = ff.get((x0, y0), 0) + 1
+                        if ff[(x0, y0)] == 12:
+                            sf = self.__dict__.setdefault("slot_fail", {})
+                            sf[(x0, y0)] = max(2, sf.get((x0, y0), 0))
+                            self.say("wall slot (%d,%d) never placeable: planned around from now on" % (x0, y0))
+                        continue
                     if self.footprint_ok(gs.HOUSE, x0, y0):
                         c = (x0 + 1.0, y0 + 1.0)
                         if not self.house_allowed(*c):
+                            # (too near the TC / in a herd's way: counted like a placement refusal, the
+                            #  cut goes round it after a while - wall5: the last slot of two rings sat
+                            #  in the farm ring for 10 minutes with 600-975 wood in the bank)
+                            ff = self.__dict__.setdefault("slot_ffail", {})
+                            ff[(x0, y0)] = ff.get((x0, y0), 0) + 1
+                            if ff[(x0, y0)] == 12:
+                                sf = self.__dict__.setdefault("slot_fail", {})
+                                sf[(x0, y0)] = max(2, sf.get((x0, y0), 0))
+                                self.say("wall slot (%d,%d) not allowed for a house: planned around from now on" % (x0, y0))
                             continue
                         if self.g.can_place(self.me, gs.HOUSE, *c):
                             return c

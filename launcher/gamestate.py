@@ -264,6 +264,8 @@ class Snapshot:
         for o in allobjs:
             if o.owner == r.me:
                 continue
+            if o.x != o.x or o.y != o.y:                 # NaN position (an object being removed): wall5 tick error
+                continue
             xi, yi = int(o.x), int(o.y)
             if not (0 <= xi < W and 0 <= yi < r.H):
                 continue
