@@ -158,8 +158,10 @@ def main():
         lobby.start_match(host, args.players, log=L)
         if not args.no_rec:
             import mapcap.engine as mce
-            mce.find_game_process = lambda: next((p for p in psutil.process_iter(["name", "exe"])
-                                                  if p.pid == host.pid), None)
+            # (AoE-MapCap 13/10 18:24 calls find_game_process(exclude=...): the old no-argument lambda raised
+            #  at once and no match was recorded - ab4 / ab5)
+            mce.find_game_process = lambda *a, **kw: next((p for p in psutil.process_iter(["name", "exe"])
+                                                           if p.pid == host.pid), None)
             cfgm = mce.load_config()
             rec_log = mce.Logger(os.path.join(OUT, "mapcap.log"))
             rec_thread = threading.Thread(target=lambda: mce.Engine(cfgm, rec_log, rec_stop).run(), daemon=True)

@@ -132,7 +132,8 @@ def assess(b):
     done = getattr(b, "techs_done", set())
     ranged = "chariot_archer" if 28 in done else ("improved_bowman" if 56 in done else "bowman")
     if getattr(b, "archer_kind", "chariot") == "improved":
-        ranged = "improved_bowman" if 56 in done else "bowman"     # (Minoan: "cung A", no chariots)
+        # (Minoan: "cung A" - the user: always upgraded to the best, 2 áo = Composite Bowman in Iron)
+        ranged = "composite_bowman" if 57 in done else ("improved_bowman" if 56 in done else "bowman")
     n_enemy_bld = sum(1 for o in getattr(b.s, "enemy_all", []) if o.kind == 80)
     want_siege = b.age >= 3 and mode == "assault" and enemy_tc is not None and (n_enemy_bld >= 25 or enemy_vils >= 1.3 * len(b.s.villagers))
     want_iron = b.age >= 3 and t - (b.start_time or 0) > 1200 and enemy_vils > 0 and b.res(0) >= 1000 + 200 and b.res(3) >= 800 + 150

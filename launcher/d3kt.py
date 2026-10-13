@@ -66,6 +66,14 @@ FARM_RESET_BELOW = 12.0  # ... once some farm's field (unit+0x44, at most 15 in 
 REVISIT = 90.0           # a known enemy working area is raided again after this many seconds
 GOLD_PER_STABLE = 2      # Bronze gold miners: 2 + 2 per stable. Farms bring food slower than mines
                          # bring gold and the TC eats food too: 2 + 4 per stable piled up 1000-1700 gold
+CL_WAIT = 4.5            # the hunters' group waits this far from the target gazelle (out of the 2.1-2.9 hop range)
+CL_ARC = 2.9             # ... then steps onto an arc this far from it: within spear range (3.0), all at one distance
+SPEAR_REACH = 3.05        # a villager spears a gazelle from this far without walking closer
+KITE_R = 3.5             # enemy melee this close to any archer of the group: the whole group steps back
+KITE_STEP = 3.0          # ... this far
+PULSE_MOVE = 1.0         # ... for this long (game s), then it shoots for one reload + 0.3 s
+PULSE_STEP = 1.5         # the archers' side step during the reload (tiles)
+CL_GAP = 0.6             # tiles between two hunters of the group (the user: within 1.5 of each other)
 FOOD_PER_VILLAGER = 70   # a food site keeps one villager per 70 food left at most (the user)
 AGING_WOOD_MAX = 7       # choppers before the Bronze click (players: 5-9 at the Tool click)
 WOOD_FLOOR = 4           # villagers always on wood (the user: houses and the wall always need some)
@@ -160,6 +168,10 @@ BUILD_COST = {gs.HOUSE: 30, gs.GRANARY: 120, gs.STORAGE_PIT: 120, gs.MARKET: 150
 SIZES = {gs.HOUSE: 2, gs.FARM: 3, gs.GRANARY: 3, gs.STORAGE_PIT: 3, gs.MARKET: 3, gs.STABLE: 3,
          gs.BARRACKS: 3, gs.TOWN_CENTER: 3, gs.TEMPLE: 3, gs.ARCHERY_RANGE: 3, gs.SIEGE_WORKSHOP: 3, gs.ACADEMY: 3,
          gs.GOVERNMENT_CENTER: 3}
+# building -> buildings that must stand first (the user: BB opens BL and BA, BL opens BY, BA opens BK, BC opens
+# BN, BG opens BM)
+PREREQ = {gs.STABLE: (gs.BARRACKS,), gs.ARCHERY_RANGE: (gs.BARRACKS,), gs.ACADEMY: (gs.STABLE,),
+          gs.SIEGE_WORKSHOP: (gs.ARCHERY_RANGE,), gs.TOWN_CENTER: (gs.GOVERNMENT_CENTER,), gs.MARKET: (gs.GRANARY,)}
 MILITARY_BUILDINGS = (gs.STABLE, gs.ACADEMY, gs.ARCHERY_RANGE, gs.SIEGE_WORKSHOP, gs.BARRACKS)
 
 
@@ -1099,6 +1111,14 @@ class Brain:
     def start_build(self, btype, spot, builders, purpose=""):
         if not spot or not builders:
             return False
+        # the game's building tree, as a player has it (the user, 13/10): the build command does not check it
+        # - the bots built stables / ranges with no barracks. Nothing is built before its prerequisite stands.
+        need = [bt for bt in PREREQ.get(btype, ()) if not self.complete(bt)]
+        if need:
+            if self.now() - self.__dict__.setdefault("_prereq_say", {}).get(btype, -99) > 60:
+                self._prereq_say[btype] = self.now()
+                self.say("PREREQ %d not built: %s first" % (btype, ", ".join(str(b) for b in need)))
+            return False
         x, y = spot
         cost = BUILD_COST.get(btype, 0)
         unseen = sum(BUILD_COST.get(p.btype, 0) for p in self.pending if not p.confirmed)
@@ -1787,9 +1807,11 @@ class Brain:
         room = 3 + (len(self.complete(gs.STABLE)) if self.age >= 3 else 0)   # every stable + TC eat room fast
         need_pop = (4 + 4 * len(houses) < self.pop_limit) and (self.res(gs.HEADROOM) <= room or not houses)
         ring = getattr(self, "wall_fixed_R", None) is not None
+        # before the Bronze click the wall houses come after the Bronze buildings and the first farms (ms1: 12-21
+        # wall houses, 360-630 wood, in the Tool age - the market / stable and the farms waited, 5 minutes there)
+        tool_ok = self.tool_wood_free(60) and (len(self.any_of(gs.FARM)) >= 4 or self.res(gs.WOOD) >= 300)
         wall_fill = (self.wall and self.res(gs.WOOD) >= 60 and self.now() - self.last_wall_house > 8
-                     and ((self.age >= 2 and (self.bronze_clicked or self.tool_wood_free(60)
-                                              or (ring and self.res(gs.WOOD) >= 200)))
+                     and ((self.age >= 2 and (self.bronze_clicked or tool_ok))
                           or self.enemy_threat())
                      and len(houses) < 45)      # (gate11: the fill stalled 10 min in Tool age saving 300 wood)
         if not (need_pop or wall_fill) or not self.can_afford(wood=30):
@@ -1856,6 +1878,10 @@ class Brain:
             food = 500 + self.vil_cost * left
             houses_want = max(0, -(-(self.stone_target() + 2 - 4) // 4) - len(self.any_of(gs.HOUSE)))
             wood = 30 * houses_want + (0 if has(gs.GRANARY) else 120) + (0 if self.second_stone_building() else 120)
+            # the next berry patch's granary once one is known (players: the 2nd granary at 6:15-7:35, 9-11 on
+            # berries at the Tool click; ms5: 8:35 for want of wood)
+            # (the next patch's granary is NOT added here: it raised the Stone wood need and took food workers -
+            #  ms11-ms14 Tool clicks 13:12 on average against 11:55)
             # half of the wall in the Stone age, the rest in the Tool age (age6: the whole wall's 800 wood
             # in the Stone forecast put 12 on wood, 5 hunting with room for 15, Tool clicked at 12:12)
             wood += 15 * wall_left
@@ -1863,6 +1889,7 @@ class Brain:
         elif not self.bronze_clicked:
             food = 800
             wood = (0 if has(gs.MARKET) else 150) + (0 if has(self.second_building()) else 150)
+            wood += 0 if has(gs.BARRACKS) else 125               # (BB opens BL / BA)
             wood += 30 * wall_left
             if has(gs.MARKET):
                 # farms only once the market stands (before it no farm can be built: age5 kept 18 on wood
@@ -2007,7 +2034,9 @@ class Brain:
         elif self.age == 1 or (self.age == 2 and not self.bronze_clicked):
             # Tool Age researching / Tool Age: no villagers - except a poor-map start that clicked Tool
             # at 20: it still makes its 25 (the user's number) when there is food to spare
-            want = nvil < self.stone_target() and self.res(gs.FOOD) >= 150
+            # (only from food beyond the Bronze click's 800 - ffa3: Tool clicked at 20, five villagers made in the
+            #  Tool age took 250 food and the Bronze click came 5:44 after the Tool age)
+            want = nvil < self.stone_target() and self.res(gs.FOOD) >= 800 + 150
         else:
             want = nvil < MAX_VILLAGERS
             if self.age == 2:
@@ -3116,6 +3145,7 @@ class Brain:
         if not self.tool_clicked or self.bronze_clicked:
             return True
         need = (0 if self.any_of(gs.MARKET) else 150) + (0 if self.any_of(self.second_building()) else 150)
+        need += 0 if self.any_of(gs.BARRACKS) else 125          # (BB before BL / BA)
         return self.res(gs.WOOD) - cost >= need
 
     def herd_pit(self, h):
@@ -3391,6 +3421,9 @@ class Brain:
                 if not (act and act[1] in {o.ptr for o in live}) and not self.recent(v.id, within=1.2):
                     self.order([v], min(live, key=lambda o: o.dist(v.x, v.y)))   # the whole herd dies first
             return
+        if h.state == "kill" and self.herd_live(h):
+            self.herd_cluster_step(h, key)              # (one group step per tick for the whole site)
+            return
         if h.state == "kill":
             live = self.herd_live(h)
             if live:
@@ -3476,6 +3509,92 @@ class Brain:
             return
         if force or self.idle(v):
             self.order([v], min(car, key=lambda a: a.dist(v.x, v.y)))
+
+    def herd_cluster_step(self, h, key):
+        """The user's way to kill a herd where it stands. Phases (kept on the herd):
+          gather  - every hunter of the site to a slot of a short line (0.6 tiles apart, within 1.5 of each
+                    other) CL_WAIT tiles from the target, on the hunters' side, out of every gazelle's flee
+                    distance; until all are on their slot (12 s at most);
+          advance - every hunter to a slot of an arc round the target, all CL_ARC tiles from it (within spear
+                    range, out of its 2.1-tile flee circle), 0.6 tiles apart;
+          throw   - once all stand on the arc (4 s at most): all spear the target in the same tick;
+          next    - the target down (or gone 6 s): the next gazelle nearest to the group, the group steps in
+                    again (advance; gather first if it is further than CL_WAIT + 2)."""
+        t = self.now()
+        if getattr(h, "cl_tick", None) == self.ticks:
+            return
+        h.cl_tick = self.ticks
+        live = self.herd_live(h)
+        hunters = [u for u in self.s.villagers if self.hunt_site.get(u.id) == key]
+        if not live or not hunters:
+            return
+        cx = sum(u.x for u in hunters) / len(hunters)
+        cy = sum(u.y for u in hunters) / len(hunters)
+        tgt = next((a for a in live if a.id == getattr(h, "cl_tgt", None)), None)
+        phase = getattr(h, "cl_phase", None)
+        if tgt is None:
+            tgt = min(live, key=lambda a: a.dist(cx, cy))
+            h.cl_tgt, h.cl_t = tgt.id, t
+            phase = "gather" if (phase is None or tgt.dist(cx, cy) > CL_WAIT + 2) else "advance"
+            h.cl_phase, h.cl_dir = phase, None
+        ux, uy = unit(cx - tgt.x, cy - tgt.y)
+        if getattr(h, "cl_dir", None) is None or phase == "gather":
+            h.cl_dir = (ux, uy)
+        ux, uy = h.cl_dir
+        px, py = -uy, ux
+        order = sorted(hunters, key=lambda u: ((u.x - tgt.x) * px + (u.y - tgt.y) * py))   # left to right
+        n = len(order)
+
+        def slots(radius, arc):
+            out = []
+            for i, u in enumerate(order):
+                k = i - (n - 1) / 2.0
+                if arc:
+                    a = math.atan2(uy, ux) + k * (CL_GAP / radius)
+                    out.append((u, tgt.x + math.cos(a) * radius, tgt.y + math.sin(a) * radius))
+                else:
+                    out.append((u, tgt.x + ux * radius + px * k * CL_GAP, tgt.y + uy * radius + py * k * CL_GAP))
+            return out
+        if phase == "gather":
+            sl = slots(CL_WAIT, False)
+            far = [(u, x, y) for (u, x, y) in sl if u.dist(x, y) > 0.8]
+            for (u, x, y) in far:
+                if not self.recent(u.id, ("cl", "g"), within=1.5):
+                    self.move([u], x, y)
+                    self.mark([u], ("cl", "g"))
+            if not far or t - h.cl_t > 12:
+                h.cl_phase, h.cl_t = "advance", t
+            return
+        if phase == "advance":
+            sl = slots(CL_ARC, True)
+            # (ready = every hunter within spear range of the target: the arc slots move with a wandering
+            #  gazelle, 0.45 tiles of a slot was never met - ab4 / ab5: "N not there after 4 s" every time)
+            far = [(u, x, y) for (u, x, y) in sl if u.dist(tgt.x, tgt.y) > SPEAR_REACH]
+            # one of them is inside the hop range already (the gazelle is about to jump): throw now, everybody
+            # within 3.3 - waiting for the rest lost every gazelle (ab8: "out of range after 6 s" 41 of 43)
+            close = any(u.dist(tgt.x, tgt.y) < 2.4 for (u, _x, _y) in sl)
+            for (u, x, y) in sl:
+                if u.dist(x, y) > 0.5 and not self.recent(u.id, ("cl", "a"), within=1.0):
+                    self.move([u], x, y)
+                    self.mark([u], ("cl", "a"))
+            if not far or close or t - h.cl_t > 6:
+                throwers = [(u, x, y) for (u, x, y) in sl if u.dist(tgt.x, tgt.y) <= 3.3] if close and far else sl
+                for (u, _x, _y) in throwers:            # everybody in the same tick (the user)
+                    self.order([u], tgt)
+                h.cl_phase, h.cl_t = "throw", t
+                h.last_throw = t
+                if t - getattr(h, "cl_say", -99) > 20:
+                    h.cl_say = t
+                    self.say("CLUSTER herd %s: %d hunters throw at gazelle #%d together (%s)" % (
+                        h.key, len(sl), tgt.id, "all within spear range" if not far else "%d out of range after 6 s" % len(far)))
+            return
+        if phase == "throw":
+            if tgt.hp <= 0 or t - h.cl_t > 6:
+                h.cl_tgt = None                          # the next one: chosen at the next step
+                h.cl_phase = "next"
+            return
+        if phase == "next":
+            h.cl_tgt = None
 
     def work_lure(self, v, eid, force):
         """One villager hits the elephant and runs to the TC; it is killed only once it is within
@@ -3839,6 +3958,12 @@ class Brain:
             self.wfast = GameWorld(self, mg)
         w = self.wfast if mg is not None else self.wslow
         now = time.time()
+        try:
+            self.pulse_step(w.g)
+        except Exception as e:  # noqa: BLE001
+            if now - getattr(self, "_pulse_err_t", 0) > 10:
+                self._pulse_err_t = now
+                self.say("pulse error: %r" % (e,))
         for key, task in list(self.ntasks.items()):
             if task.done or task.failed:
                 continue
@@ -3859,6 +3984,69 @@ class Brain:
                     cx = sum(p[1] for p in mem) / len(mem)
                     cy = sum(p[2] for p in mem) / len(mem)
                     self.keep_off_herd(h, mem, cx, cy, task.pushers, now, mg or self.g)
+
+    def pulse_step(self, game):
+        """Fast loop: the shot-synced side steps of the archers archer_fight put in self._pulse."""
+        pulse = self.__dict__.get("_pulse")
+        if not pulse:
+            return
+        import struct
+        try:
+            now = game.m.u32(game.world() + 4) / 1000.0
+        except Exception:  # noqa: BLE001
+            return
+        P = self.__dict__.setdefault("_pulse_stats", {"lags": [], "shots": 0, "dodges": 0, "skips": 0})
+        lags = P["lags"]
+        L = sorted(lags)[len(lags) // 2] if len(lags) >= 5 else 0.6
+        for uid, st in list(pulse.items()):
+            u = self._by_id.get(uid)
+            tgt = next((e for e in self.s.enemy if e.id == st.get("tgt")), None)   # (_by_id holds ours only)
+            if u is None or tgt is None or now - st.get("seen", now) > 4.0:
+                del pulse[uid]
+                continue
+            raw = game.m.read(u.ptr, 0x1B8)
+            traw = game.m.read(tgt.ptr, 0x40)
+            if not raw or len(raw) < 0x1B8 or not traw:
+                continue
+            timer, = struct.unpack_from("<f", raw, 0x1B4)
+            x, y = struct.unpack_from("<ff", raw, O_X)
+            tx, ty = struct.unpack_from("<ff", traw, O_X)
+            prev = st.get("timer")
+            st["timer"] = timer
+            st["peak"] = max(st.get("peak", 0.0), timer)
+            shot = prev is not None and timer > prev + 0.3
+            # a fixed rhythm (pulse1: the order lag at x2 is ~1.46 game s, about one reload - an order sent
+            # after a shot lands at the next one): shoot for one reload + 0.3 s, step aside PULSE_MOVE s, shoot
+            # again... every order is late by the same lag, so the rhythm itself stays
+            if shot:
+                P["shots"] += 1
+            R = st.get("peak") or 1.4
+            t_ph = st.setdefault("t_ph", now)
+            if st["ph"] == "attack":
+                if now - t_ph < R + 0.3:
+                    continue
+                dx, dy = unit(x - tx, y - ty)
+                side = st.get("side", 1) * -1
+                st["side"] = side
+                W, H = self.r.W, self.r.H
+                gx = min(W - 2.0, max(1.0, x - dy * PULSE_STEP * side))
+                gy = min(H - 2.0, max(1.0, y + dx * PULSE_STEP * side))
+                game.move([u], gx, gy)
+                st.update(ph="dodge", t_ph=now, t_mv=now, x0=x, y0=y, measured=False)
+                P["dodges"] += 1
+            else:
+                if not st.get("measured") and math.hypot(x - st["x0"], y - st["y0"]) > 0.2:
+                    st["measured"] = True
+                    lags.append(now - st["t_mv"])
+                    del lags[:-40]
+                if now - t_ph >= PULSE_MOVE:
+                    game.order([u], tgt)
+                    st.update(ph="attack", t_ph=now)
+        t = now
+        if t - P.get("say", -99) > 60 and P["shots"]:
+            P["say"] = t
+            self.say("PULSE shots %d, side steps %d | order lag median %.2f s (%d measured)" % (
+                P["shots"], P["dodges"], L, len(lags)))
 
     def hand_over_lure(self, eid, L, v, why):
         """The lurer is down to <= 12 hp (one more blow kills it): a fresh villager takes the lure over
@@ -4370,7 +4558,7 @@ class Brain:
     def building_spot(self, btype):
         # the user: the market and the (first) stable must be built for the age anyway - they close a
         # gap of the wall; later military buildings stand outside the wall
-        first_age_building = btype == gs.MARKET or (btype == self.second_building() and not self.any_of(btype))
+        first_age_building = btype == gs.MARKET or (btype == self.second_building() and not self.any_of(btype))             or (btype == gs.BARRACKS and not self.any_of(gs.BARRACKS))     # (the user: BB, BM, BL close wall gaps)
         of = self.__dict__.get("_outside_fail", {}).get(btype)
         outside_ok = not (of and of[0] >= 2 and self.now() - of[1] < 240)   # (units4: 8 failures in a row out there)
         if btype in MILITARY_BUILDINGS and not first_age_building and outside_ok:
@@ -4496,8 +4684,17 @@ class Brain:
         if not tc:
             return
         self.decide_army_plan()
+        sb = self.second_building()
+        # BB (barracks) opens BL / BA: right after the Tool click, while the age researches (the user's games:
+        # Tool clicked 8:24-9:30, barracks 9:50-10:40, then market + stable / range) - a Stone age building
+        if (self.tool_clicked or self.age >= 2) and gs.BARRACKS in PREREQ.get(sb, ()) and                 not self.any_of(gs.BARRACKS) and not self.pending_of(gs.BARRACKS) and self.can_afford(wood=125):
+            spot, why = self.building_spot(gs.BARRACKS)
+            if spot:
+                self.start_build(gs.BARRACKS, spot, self.builders_near(2, *spot), "(BB opens BL / BA) " + why)
         if self.age >= 2:
-            for btype in (gs.MARKET, self.second_building()):
+            for btype in (gs.MARKET, sb):
+                if btype == sb and not self.complete(gs.BARRACKS) and gs.BARRACKS in PREREQ.get(sb, ()):
+                    continue                             # (its barracks first)
                 if not self.any_of(btype) and not self.pending_of(btype) and self.can_afford(wood=150):
                     spot, why = self.building_spot(btype)
                     if spot:
@@ -4512,6 +4709,8 @@ class Brain:
             if A.get("want_archery"):
                 wants.append((gs.ARCHERY_RANGE, 150, "(archery: enemy infantry) "))
             if A.get("want_siege") or A.get("want_iron"):
+                if not self.any_of(gs.ARCHERY_RANGE):
+                    wants.append((gs.ARCHERY_RANGE, 150, "(BA opens BK) "))
                 wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop) "))
             if A.get("want_iron") and not self.any_of(gs.TEMPLE):
                 wants.append((gs.TEMPLE, 200, "(temple: second Bronze building for Iron) "))
@@ -4595,7 +4794,8 @@ class Brain:
             # else the basic bowman; the villagers' 50 food stays untouched
             ranged = A.get("ranged", "bowman")
             utype, cost = {"chariot_archer": (gs.CHARIOT_ARCHER, dict(food=40, wood=70)),
-                           "improved_bowman": (gs.IMPROVED_BOWMAN, dict(food=40, gold=20))}.get(
+                           "improved_bowman": (gs.IMPROVED_BOWMAN, dict(food=40, gold=20)),
+                           "composite_bowman": (gs.COMPOSITE_BOWMAN, dict(food=40, gold=20))}.get(
                                ranged, (gs.BOWMAN, dict(food=40, wood=20)))
             archers_now = [u for u in mil if tactics.unit_class(u.name) in ("archer", "chariot")]
             for b in self.complete(gs.ARCHERY_RANGE):
@@ -4786,7 +4986,7 @@ class Brain:
         avail = [tid for tid in avail if tid in K.TECHS]    # (states 1 of pseudo-techs: buildings, civ bonuses)
         prio = K.TECH_PRIORITY
         if getattr(self, "archer_plan", False):
-            first = [56, 41, 44] if getattr(self, "archer_kind", "chariot") == "improved" else [28, 41, 34, 56, 44]
+            first = [56, 41, 44, 57] if getattr(self, "archer_kind", "chariot") == "improved" else [28, 41, 34, 56, 44]
             prio = first + [x for x in K.TECH_PRIORITY if x not in first]
         elif self.horse_army():
             prio = K.TECH_PRIORITY[:2] + [34] + [x for x in K.TECH_PRIORITY[2:] if x != 34]   # Nobility early
@@ -4937,8 +5137,40 @@ class Brain:
         enemy_army = [e for e in s.enemy if e.kind == gs.KIND_COMBAT and e.cls != gs.CLS_VILLAGER and e.hp > 0
                       and "Artifact" not in e.name]
         threats = [e for e in enemy_army if tc and e.dist(tc.x, tc.y) < 20]
+        A_mode_pre = (self.tactics or {}).get("mode")
         # the user's "điều cung": in every mode an archer under arrow fire steps sideways (a missile aimed
         # at a unit moving across its path misses), shoots again, steps the other way...
+        self.micro_probe(mil)
+        # never a losing fight piece by piece (ms10: chariot archers coming 1-2 at a time died to 8 camels):
+        # a unit whose enemy within 9 tiles outweighs ours there by 1.5x falls back to the TC to group
+        # (not when they are at our town: the defence there stays)
+        if tc and A_mode_pre != "defend":
+            fall = set()
+            for u in mil:
+                if u.type == gs.SCOUT or u.dist(tc.x, tc.y) < 15:
+                    continue
+                foes9 = [e for e in enemy_army if e.dist(u.x, u.y) <= 9]
+                if not foes9:
+                    continue
+                ev = sum(tactics.VALUE.get(tactics.unit_class(e.name), 1.0) * max(0.2, e.hp / max(1.0, e.maxhp or 1.0)) for e in foes9)
+                ov = sum(tactics.VALUE.get(tactics.unit_class(o.name), 1.0) * max(0.2, o.hp / max(1.0, o.maxhp or 1.0))
+                         for o in mil if o.dist(u.x, u.y) <= 9)
+                if ev > 1.5 * ov:
+                    fall.add(u.id)
+                    if not self.recent(u.id, ("fall",), within=4):
+                        self.move([u], tc.x + 4, tc.y + 4)
+                        self.mark([u], ("fall",))
+                        self.retreat_until[u.id] = t + 4.0
+            if fall:
+                if t - getattr(self, "_fall_say", -99) > 30:
+                    self._fall_say = t
+                    self.say("FALLBACK %d soldiers outnumbered (their strength > 1.5x ours within 9 tiles): back to the TC to group" % len(fall))
+                for u in mil:
+                    if u.id in fall:
+                        self.hp_prev[u.id] = u.hp
+                mil = [u for u in mil if u.id not in fall]
+                if not mil:
+                    return
         # (A/B tests: AOESOLO_MICRO_OFF="3,4" - those players keep the old way: a dodge only inside a raid)
         micro_off = str(self.me) in os.environ.get("AOESOLO_MICRO_OFF", "").split(",")
         dodging = set() if micro_off else {u.id for u in mil if self.archer_dodge(u, enemy_army)}
@@ -5028,6 +5260,79 @@ class Brain:
         for u in mil:
             self.hp_prev[u.id] = u.hp
 
+    def micro_probe(self, mil):
+        """Measures for the user's archer micro (shoot - side step during the reload - shoot):
+          reload: the raw floats of up to 3 of our archers that are attacking, every tick; a field that falls
+                  and jumps back up regularly (a saw-tooth) is the attack timer - its period is the reload;
+          lag:    every side step / retreat move: the time until the unit really starts moving.
+        PROBE lines; on in every game (cheap: 3 units x 128 floats a tick)."""
+        import struct
+        t = self.now()
+        P = self.__dict__.setdefault("_probe", {"hist": {}, "said": set(), "lags": [], "moves": {}})
+        # lag: the moves given by the micro (archer_dodge / archer_fight store them)
+        for uid, (t0, x0, y0) in list(P["moves"].items()):
+            u = self.obj_by_id(uid)
+            if u is None or t - t0 > 8:
+                del P["moves"][uid]
+                continue
+            if math.hypot(u.x - x0, u.y - y0) > 0.3:
+                P["lags"].append(t - t0)
+                del P["moves"][uid]
+        if len(P["lags"]) >= 20 and t - P.get("lag_say", -99) > 120:
+            P["lag_say"] = t
+            ls = sorted(P["lags"])
+            self.say("PROBE lag: order -> moving, %d moves: median %.2f s, p10 %.2f, p90 %.2f (game seconds)" % (
+                len(ls), ls[len(ls) // 2], ls[len(ls) // 10], ls[9 * len(ls) // 10]))
+            P["lags"] = P["lags"][-60:]
+        shooters = []
+        for u in mil:
+            if tactics.unit_class(u.name) != "archer":
+                continue
+            act = self.r.action(u)
+            if act and act[1] and any(e.ptr == act[1] for e in self.s.enemy):
+                shooters.append(u)
+        busy = P.get("thread") is not None and P["thread"].is_alive()
+        todo = [u for u in shooters if u.name not in P["said"]]
+        if todo and not busy:
+            u = todo[0]
+            import threading
+            P["thread"] = threading.Thread(target=self._probe_sample, args=(u.ptr, u.name), daemon=True)
+            P["thread"].start()
+
+    def _probe_sample(self, ptr, name):
+        """20 Hz for 10 s (real time) on one attacking archer: the saw-tooth field and its period, game seconds."""
+        import struct
+        import time as _t
+        P = self._probe
+        samples = []
+        t_end = _t.time() + 10.0
+        while _t.time() < t_end:
+            raw = self.g.m.read(ptr, 0x200)
+            gt = self.g.m.u32(self.g.world() + 4) / 1000.0 if self.g.world() else None
+            if raw and gt is not None:
+                samples.append((gt, struct.unpack_from("<128f", raw, 0)))
+            _t.sleep(0.05)
+        best = None
+        for k in range(128):
+            vals = [(tt, f[k]) for tt, f in samples]
+            if len(vals) < 40 or not all(-0.01 <= v <= 6.0 for _tt, v in vals):
+                continue
+            ups = [tt for (ta, va), (tt, vb) in zip(vals, vals[1:]) if vb - va > 0.4]
+            downs = sum(1 for (ta, va), (tt, vb) in zip(vals, vals[1:]) if -0.6 < vb - va < -0.005)
+            if len(ups) >= 3 and downs >= 10:
+                per = sorted(b2 - a2 for a2, b2 in zip(ups, ups[1:]))
+                mid = per[len(per) // 2]
+                spread = (per[-1] - per[0]) / max(0.01, mid)
+                cand = (spread, k, mid, len(ups), max(v for _tt, v in vals))
+                if best is None or cand < best:
+                    best = cand
+        P["said"].add(name)
+        if best is None:
+            self.say("PROBE reload %s: no saw-tooth field in %d samples" % (name, len(samples)))
+        else:
+            self.say("PROBE reload %s: field +0x%x saw-tooth, period %.2f game s (%d resets, peak %.2f, spread %.2f, %d samples)" % (
+                name, 4 * best[1], best[2], best[3], best[4], best[0], len(samples)))
+
     def archer_dodge(self, u, foes):
         """An archer (bowman, chariot archer) that enemy archers / chariot archers / siege aim at: a step of
         2.5 tiles across their line, left / right in turn, held 1.2 s, then it shoots again. Done when it
@@ -5051,7 +5356,9 @@ class Brain:
         if not shooters:
             return False
         last = self.__dict__.setdefault("_dodge_t", {}).get(u.id, -99)
-        if not hurt and t - last < 1.5:
+        # only when just hit, at most every 3 s (A/B ab1-ab6: dodging every 1.5 s while aimed at kept the
+        # archers walking instead of shooting - 120 losses against 112 for the old way)
+        if not hurt or t - last < 3.0:
             return False
         self.__dict__["_dodge_n_total"] = self.__dict__.get("_dodge_n_total", 0) + 1
         e0 = min(shooters, key=lambda e: e.dist(u.x, u.y))
@@ -5060,10 +5367,11 @@ class Brain:
         self.dodge_n[u.id] = n
         side = 1 if (n % 2) else -1                      # left, right, left ... (no drift)
         W, H = self.r.W, self.r.H
-        gx = min(W - 2.0, max(1.0, u.x - dy * 2.5 * side))
-        gy = min(H - 2.0, max(1.0, u.y + dx * 2.5 * side))
+        gx = min(W - 2.0, max(1.0, u.x - dy * 1.8 * side))
+        gy = min(H - 2.0, max(1.0, u.y + dx * 1.8 * side))
         self.move([u], gx, gy)
-        self.retreat_until[u.id] = t + 1.2
+        self.__dict__.setdefault("_probe", {"hist": {}, "said": set(), "lags": [], "moves": {}})["moves"][u.id] = (t, u.x, u.y)
+        self.retreat_until[u.id] = t + 0.9
         self._dodge_t[u.id] = t
         if t - getattr(self, "_dodge_say", 0) > 20:
             self._dodge_say = t
@@ -5100,6 +5408,40 @@ class Brain:
         fighters = [u for u in engaged if u.id not in done and t >= self.retreat_until.get(u.id, 0)]
         if not fighters:
             return done
+        # kiting melee (the user): their cavalry / camels / infantry / chariots / elephants close to ANY of the
+        # group -> the WHOLE group steps back (the ones behind would block the front ones), then shoots again
+        # only from melee SLOWER than the archer (ms1-ms6: chariot archers kiting camels - as fast as they are,
+        # with a bonus on them - were caught at 1-3 tiles while stepping back: 99 losses against 72): chariot /
+        # horse archers (speed ~2.0) kite infantry, hoplites, elephants; bowmen (~1.2) hoplites and elephants
+        SLOW = {"infantry": 1.2, "hoplite": 0.9, "elephant": 0.8}
+        melee = [e for e in foes if tactics.unit_class(e.name) in SLOW]
+        if melee and not str(self.me) in os.environ.get("AOESOLO_KITE_OFF", "").split(","):
+            def fast(u):
+                return 2.0 if ("Chariot" in u.name or "horse" in u.name.lower()) else 1.2
+            close = [(e, u) for e in melee for u in fighters
+                     if e.dist(u.x, u.y) < KITE_R and fast(u) > SLOW[tactics.unit_class(e.name)] + 0.2]
+            if close:
+                mx = sum(e.x for e, _u in close) / len(close)
+                my = sum(e.y for e, _u in close) / len(close)
+                gx = sum(u.x for u in fighters) / len(fighters)
+                gy = sum(u.y for u in fighters) / len(fighters)
+                ax, ay = unit(gx - mx, gy - my)
+                hx, hy = (tc.x, tc.y) if tc else (gx, gy)
+                bx, by = unit(hx - gx, hy - gy)
+                dx, dy = unit(ax * 2 + bx, ay * 2 + by)     # away from them, a little towards home
+                W, H = self.r.W, self.r.H
+                for u in fighters:
+                    self.move([u], min(W - 2.0, max(1.0, u.x + dx * KITE_STEP)),
+                              min(H - 2.0, max(1.0, u.y + dy * KITE_STEP)))
+                    self.retreat_until[u.id] = t + 1.0
+                    done.add(u.id)
+                    self.__dict__.get("_pulse", {}).pop(u.id, None)
+                self.__dict__["_kites"] = self.__dict__.get("_kites", 0) + 1
+                if t - getattr(self, "_kite_say", -99) > 30:
+                    self._kite_say = t
+                    self.say("KITE %d archers step back from %d melee (%s), %d kites so far" % (
+                        len(fighters), len(set(e.id for e, _u in close)), close[0][0].name, self._kites))
+                return done
         RANGE = 7.0
 
         def score(e):
@@ -5115,7 +5457,17 @@ class Brain:
         if tgt is None:
             tgt = min(foes, key=score)
             self._focus = (tgt.id, t)
+        shooter_tgt = tactics.unit_class(tgt.name) in ("archer", "siege")
+        pulse = self.__dict__.setdefault("_pulse", {})
         for u in fighters:
+            if shooter_tgt and not str(self.me) in os.environ.get("AOESOLO_PULSE_OFF", "").split(","):
+                st = pulse.setdefault(u.id, {"ph": "attack"})
+                st["tgt"], st["seen"] = tgt.id, t
+                if st.get("ph") == "dodge":
+                    done.add(u.id)
+                    continue                             # (the fast loop has it)
+            else:
+                pulse.pop(u.id, None)
             act = self.r.action(u)
             if act and act[1] == tgt.ptr:
                 done.add(u.id)

@@ -153,8 +153,13 @@ def demands(b):
     # (once the market stands the farms are the food: the two scouts farm too - age1: 2 villagers scouted
     #  through the whole Tool age while the Bronze click waited for food)
     farms_ready = stage == 2 and b.complete(gs.MARKET)
-    if stage <= 2 and not b.bronze_clicked and not farms_ready and             (b.known_food(999.0) < 1.5 * b.food_needed() or getattr(b, "far_food", False)):
-        out.append(Demand("scout", 2, 2, 2, indices=SCOUTS))     # (min 2: the wood demand below must not take them)
+    if stage <= 2 and not b.bronze_clicked and not farms_ready:
+        # 2 scouts while the food known does not cover the need, 1 up to 1.5x, none beyond (ms2: two scouts the
+        # whole Stone age - 13 of 23 on food at the 25th villager against the players' 17-20)
+        known, need = b.known_food(999.0), b.food_needed()
+        k = 2 if (known < need or getattr(b, "far_food", False) and known < 1.2 * need) else (1 if known < 1.5 * need else 0)
+        if k:
+            out.append(Demand("scout", k, k, 2, indices=SCOUTS))   # (min k: the wood demand below must not take them)
 
     # 4. wood - ahead of the hunts (priority 2.5): 4 choppers first (houses, the pit's 120 wood), then
     #    exactly 6 at the first pit; before the pit everybody spare chops (after the hunts took theirs)
