@@ -122,11 +122,12 @@ class Config:
 
 
 class Session:
-    def __init__(self, base_dir, cfg, log=print, status=lambda s: None, dll=None, dplaunch=None, pool=None):
+    def __init__(self, base_dir, cfg, log=print, status=lambda s: None, dll=None, dplaunch=None, pool=None,
+                 game_dir=None):
         self.pool = pool
         self.dplaunch = dplaunch or os.path.join(base_dir, "bin", "dplaunch.exe")
         self.base = base_dir
-        self.game_dir = os.path.join(base_dir, "AoE-HD")
+        self.game_dir = game_dir or os.path.join(base_dir, "AoE-HD")     # (the player's own install, gamedir.find)
         self.dll = dll or os.path.join(base_dir, "bin", "aoehook.dll")
         self.cfg = cfg
         self.log = log

@@ -5,8 +5,9 @@ import sys
 import threading
 import time
 import tkinter as tk
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 
+import gamedir
 import lobby
 import orchestrator
 
@@ -81,6 +82,14 @@ class App:
                      values=["1366x768", "1600x900", "1920x1080"]).grid(row=r, column=1, sticky="w", pady=(8, 0))
         r += 1
 
+        ttk.Label(frm, text="Thư mục game").grid(row=r, column=0, sticky="w", pady=(8, 0))
+        self.game_dir = gamedir.find(base_dir(), deep=False)
+        self.game_dir_var = tk.StringVar(value=self._short(self.game_dir) if self.game_dir else "(đang tìm...)")
+        ttk.Label(frm, textvariable=self.game_dir_var, foreground="#555", width=34).grid(
+            row=r, column=1, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Button(frm, text="Chọn...", command=self.choose_game_dir, width=10).grid(row=r, column=3, sticky="e", pady=(8, 0))
+        r += 1
+
         ttk.Separator(frm).grid(row=r, column=0, columnspan=4, sticky="ew", pady=12)
         r += 1
         ttk.Label(frm, text="Tên của bạn").grid(row=r, column=0, sticky="w")
@@ -123,12 +132,65 @@ class App:
             row=r, column=0, columnspan=3, sticky="w", pady=(6, 0))
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.after(200, self.pump)
-        self.pool = orchestrator.BotPool(os.path.join(base_dir(), "AoE-HD"),
-                                         resource_path(os.path.join("bin", "aoehook.dll")), log=self.log)
-        root.after(1500, self.warm_bots)       # hidden bots get ready while you choose the settings
+        self.pool = None
+        if self.game_dir:
+            root.after(300, lambda: self.use_game_dir(self.game_dir))
+        else:
+            threading.Thread(target=self._deep_find, daemon=True).start()
+
+    # ---------------------------------------------------------------- the game folder
+    @staticmethod
+    def _short(p):
+        return p if len(p) <= 44 else "..." + p[-41:]
+
+    def _deep_find(self):
+        p = gamedir.find(base_dir(), deep=True)
+        self.root.after(0, lambda: self._found(p))
+
+    def _found(self, p):
+        if p:
+            self.use_game_dir(p)
+        else:
+            self.game_dir_var.set("(chưa tìm thấy - bấm Chọn...)")
+
+    def choose_game_dir(self):
+        p = filedialog.askdirectory(title="Chọn thư mục game AoE (có EMPIRESX.EXE)",
+                                    initialdir=self.game_dir or "C:\\")
+        if not p:
+            return
+        p = os.path.normpath(p)
+        if not gamedir.has_game(p):
+            messagebox.showerror(APP_TITLE, "Thư mục này không có EMPIRESX.EXE.")
+            return
+        self.use_game_dir(p)
+
+    def use_game_dir(self, p):
+        """Take the player's own install; copy it to AoESolo's folder when it cannot be written to (the
+        bot copy of the exe and the game settings live in the game folder)."""
+        if not gamedir.known_build(p):
+            messagebox.showwarning(APP_TITLE, "EMPIRESX.EXE ở thư mục này khác bản AoE-HD mà bot được viết cho "
+                                              "(bản AoE-HD của XArena). Bot có thể không chạy được.")
+        if not gamedir.writable(p):
+            if not messagebox.askyesno(APP_TITLE, "Thư mục game không ghi được (cần quyền admin):\n%s\n\n"
+                                                  "Chép bản game trên máy này sang thư mục riêng của AoESolo để dùng?\n%s"
+                                       % (p, gamedir.local_copy_dir())):
+                self.game_dir_var.set("(chưa dùng được - bấm Chọn...)")
+                return
+
+            def prog(i, n):
+                self.status.set("Đang chép game... %d/%d" % (i, n))
+                self.root.update()
+            p = gamedir.copy_local(p, progress=prog)
+            self.status.set("Sẵn sàng")
+        self.game_dir = p
+        gamedir.remember(p)
+        self.game_dir_var.set(self._short(p))
+        self.log("game folder: %s" % p)
+        self.pool = orchestrator.BotPool(p, resource_path(os.path.join("bin", "aoehook.dll")), log=self.log)
+        self.root.after(1500, self.warm_bots)  # hidden bots get ready while you choose the settings
 
     def warm_bots(self):
-        if os.path.exists(os.path.join(base_dir(), "AoE-HD", "EMPIRESX.EXE")):
+        if self.pool is not None and gamedir.has_game(self.game_dir):
             threading.Thread(target=self.pool.ensure, args=(int(self.num_ai.get()),), daemon=True).start()
 
     def refresh_ai_rows(self):
@@ -188,9 +250,8 @@ class App:
         cfg.ai_team_mode = "together" if self.team_mode.get().startswith("Các AI") else "ffa"
         cfg.resolution = int(self.resolution.get().split("x")[0])
         cfg.player_name = self.player_name.get().strip()[:24]
-        game_dir = os.path.join(base_dir(), "AoE-HD")
-        if not os.path.exists(os.path.join(game_dir, "EMPIRESX.EXE")):
-            messagebox.showerror(APP_TITLE, "Không tìm thấy thư mục game AoE-HD cạnh file chạy.")
+        if not gamedir.has_game(self.game_dir) or self.pool is None:
+            messagebox.showerror(APP_TITLE, "Chưa có thư mục game AoE (có EMPIRESX.EXE). Bấm \"Chọn...\" để chọn.")
             return
         self.play_btn.state(["disabled"])
         self.status.set("Đang chuẩn bị...")
@@ -200,7 +261,7 @@ class App:
         sess = orchestrator.Session(base_dir(), cfg, log=self.log, status=self.set_status,
                                     dll=resource_path(os.path.join("bin", "aoehook.dll")),
                                     dplaunch=resource_path(os.path.join("bin", "dplaunch.exe")),
-                                    pool=self.pool)
+                                    pool=self.pool, game_dir=self.game_dir)
         self.session = sess
         try:
             sess.run()                 # the player's game hosts; hidden bots join
@@ -268,7 +329,7 @@ def selftest():
 def check():
     """AoESolo.exe --check: import every module the launcher needs and report (packaging test)."""
     out = []
-    for name in ("psutil", "winreg", "PIL", "dplobby", "orchestrator", "lobby", "procs", "inject", "aoemem",
+    for name in ("psutil", "winreg", "PIL", "dplobby", "orchestrator", "lobby", "procs", "inject", "aoemem", "gamedir",
                  "gamestate", "d3kt", "pathing", "walling", "placement", "gamewin",
                  "brain.brain", "brain.plan", "brain.jobs", "brain.adapter", "brain.tasks.lure", "brain.tasks.herd"):
         try:
