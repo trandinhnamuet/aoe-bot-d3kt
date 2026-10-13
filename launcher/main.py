@@ -76,6 +76,12 @@ class App:
                      values=list(lobby.RESOURCES)).grid(row=r, column=3, sticky="w", pady=(8, 0))
         r += 1
 
+        ttk.Label(frm, text="Chế độ chơi").grid(row=r, column=0, sticky="w", pady=(8, 0))
+        self.victory = tk.StringVar(value="Conquest")
+        ttk.Combobox(frm, textvariable=self.victory, state="readonly", width=16,
+                     values=lobby.VICTORIES).grid(row=r, column=1, sticky="w", pady=(8, 0))
+        r += 1
+
         ttk.Label(frm, text="Độ phân giải").grid(row=r, column=0, sticky="w", pady=(8, 0))
         self.resolution = tk.StringVar(value="1366x768")
         ttk.Combobox(frm, textvariable=self.resolution, state="readonly", width=16,
@@ -279,6 +285,7 @@ class App:
         cfg.map_size = self.map_size.get()
         cfg.pop_limit = int(self.pop.get())
         cfg.resources = self.resources.get()
+        cfg.victory = self.victory.get()
         cfg.player_civ = self.civ_value(self.player_civ.get())
         cfg.ai_civs = [self.civ_value(v.get()) for v in self.ai_civs]
         cfg.ai_team_mode = "together" if self.team_mode.get().startswith("Các AI") else "ffa"

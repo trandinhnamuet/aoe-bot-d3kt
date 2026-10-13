@@ -28,6 +28,7 @@ MAP_TYPES = ["Small Islands", "Large Islands", "Coastal", "Inland", "Highland", 
 AGES = ["Default", "Nomad", "Stone Age", "Tool Age", "Bronze Age", "Iron Age"]
 RESOURCES = {"Default": 0, "Medium": 2, "High": 3}
 POP_LIMITS = [25, 50, 75, 100, 125, 150, 175, 200]
+VICTORIES = ["Standard", "Conquest", "Time Limit", "Score"]   # lobby order (index = ex_tcf.cfg byte 0x1C)
 
 # ---------------------------------------------------------------- screen coordinates (1366x768 client)
 MAIN_MULTIPLAYER = (683, 397)
@@ -57,7 +58,7 @@ G_SCREEN_W = 0x1CAC        # int game resolution (width, height)
 
 # ---------------------------------------------------------------- settings file / registry
 def write_settings(game_dir, map_size="Medium", map_type="Highland", age="Default", resources="Default",
-                   pop_limit=50, reveal_map=False, fixed_positions=False):
+                   pop_limit=50, reveal_map=False, fixed_positions=False, victory="Conquest"):
     """Pre-seed the lobby settings ExWE.dll loads at startup (data/ex_tcf.cfg, 47 bytes)."""
     path = os.path.join(game_dir, "data", "ex_tcf.cfg")
     try:
@@ -70,7 +71,7 @@ def write_settings(game_dir, map_size="Medium", map_type="Highland", age="Defaul
     b[0x13] = 0                                   # scenario: Random Map
     b[0x14] = MAP_SIZES.index(map_size)
     b[0x18] = MAP_TYPES.index(map_type)
-    b[0x1C] = 0                                   # victory: standard
+    b[0x1C] = VICTORIES.index(victory)            # victory (the user: Conquest by default)
     b[0x20] = AGES.index(age)
     b[0x24] = RESOURCES[resources]
     b[0x29] = 0 if fixed_positions else 1         # 1 = random positions

@@ -963,11 +963,31 @@ class Brain:
                     self.role[extra[0].id] = ("build", p.btype)
                     alive.append(extra[0])
                     self.say("foundation %d at (%.1f,%.1f) gets villager #%d" % (p.btype, p.x, p.y, extra[0].id))
+            progress = False
             for v in alive:
                 if self.idle(v) or not self.recent(v.id, within=8):
                     act = self.r.action(v)
                     if not act or act[1] != obj.ptr:
                         self.order([v], obj, key=("o", obj.id))
+                        if self.idle(v) and v.dist(p.x, p.y) > 3.5:
+                            p.stuck = getattr(p, "stuck", 0) + 1   # ordered again and still standing far off
+                else:
+                    progress = True
+            if progress:
+                p.stuck = 0
+            if getattr(p, "stuck", 0) >= 4 and t - p.t > 40:
+                # nobody can get there (the user's 1v2: the Shang bot's wood-line pit 40 tiles out, 5
+                # builders idle for 1 700 s): the foundation is deleted and the spot is not tried again
+                self.say("site %d at (%.1f,%.1f) unreachable (%d idle re-orders): dropped" % (p.btype, p.x, p.y, p.stuck))
+                try:
+                    self.g.delete(obj)
+                except Exception as e:  # noqa: BLE001
+                    self.say("site delete failed: %r" % (e,))
+                self.bad_spots.add((round(p.x, 1), round(p.y, 1), p.btype))
+                self.release_builders(p)
+                if p.purpose == "(wood line)" and not self.any_of(gs.STORAGE_PIT):
+                    self.woodline_placed = False
+                continue
             keep.append(p)
         self.pending = keep
 
@@ -1041,6 +1061,24 @@ class Brain:
             kc.append((gr.x, gr.y, 1.5 + FARM_GAP + 3))
         return kc
 
+    def wall_keep_clear(self):
+        """What the wall must enclose (the cut costs more through these discs): the farm ring plus two
+        farm rows round the TC, the berries round each granary, the pits near home. The user's 1v2: an
+        r=14 cut hugged the TC's 6.5-tile disc - 117 tiles inside, 18 houses - farms, pit and berries all
+        outside, and the user's army walked into the working area untouched."""
+        kc = []
+        tc = self.tc()
+        if not tc:
+            return kc
+        kc.append((tc.x, tc.y, FARM_RING + 4.5))
+        for gr in self.any_of(gs.GRANARY):
+            if gr.dist(tc.x, tc.y) <= 30:
+                kc.append((gr.x, gr.y, 7.5))
+        for pit in self.any_of(gs.STORAGE_PIT):
+            if pit.dist(tc.x, tc.y) <= 30:
+                kc.append((pit.x, pit.y, 5.0))
+        return kc
+
     # ================================================================ walls ("bo nhà")
     def walls(self):
         """Re-plan the wall every 20 s: wide (whole town) if affordable and calm, else small."""
@@ -1050,11 +1088,15 @@ class Brain:
             return
         self.wall_t = t
         gate = None                                  # the user: no gate - a house is deleted to pass
-        kc = self.keep_clear()
+        kc = self.wall_keep_clear()
         anchors_needed = [(p.x, p.y) for p in self.any_of(gs.STORAGE_PIT)[:1]] + \
                          [(g0.x, g0.y) for g0 in self.any_of(gs.GRANARY)[:1]]
         best_wide = None
         refused = [(x0, y0, x0 + 2, y0 + 2) for (x0, y0), n in self.__dict__.get("slot_fail", {}).items() if n >= 2]
+        # never a ring hugging the TC (fix1v2: 7 houses round the TC itself, 0 tiles inside - the cut was
+        # cheapest there once the farm ring became dear): the TC and 3 tiles round it cannot be cut
+        tx0, ty0 = int(math.floor(tc.x - 1.5)), int(math.floor(tc.y - 1.5))
+        refused.append((tx0 - 3, ty0 - 3, tx0 + 6, ty0 + 6))
         explored = lambda x, y: bool(self.s.explored(x, y))   # noqa: E731
         # the user: the wall uses the terrain (forest, cliffs, water, ruins, the map edge) and houses only
         # close the gaps - the cheapest cut between the town and the field, never a ring on a disc
@@ -1077,7 +1119,13 @@ class Brain:
                 anchors_R = [(ax, ay) for ax, ay in anchors_needed if math.hypot(ax - tc.x, ay - tc.y) <= R - 3]
                 p = walling.plan_cut(self.pm, (tc.x, tc.y), anchors_R, R, keep_clear=kc, uncuttable_rects=refused,
                                      explored=explored)
-                cands[R] = (len(p.slots) + 3 * len(p.leaks) + (10 ** 5 if p.flow >= walling.INF else 0), p, t)
+                # a pit / granary near home left outside counts like 8 houses (the user's 1v2: the 18-house
+                # r=14 pocket won against the r=26 cut that held the pit)
+                missing = sum(1 for (ax, ay) in anchors_needed
+                              if math.hypot(ax - tc.x, ay - tc.y) <= 30 and (ax, ay) not in anchors_R)
+                small_town = p.region_size < 250          # (a pocket: farms and berries left outside)
+                cands[R] = (len(p.slots) + 3 * len(p.leaks) + 8 * missing
+                            + (10 ** 5 if p.flow >= walling.INF or small_town else 0), p, t)
             for R, c in list(cands.items()):
                 if t - c[2] > 80 or R not in radii:
                     del cands[R]                     # (a stale candidate: the town changed since)
@@ -1537,8 +1585,9 @@ class Brain:
                 self.queued = False
             # the stone target reached and the Tool Age affordable while a villager still trains: stop it,
             # the Tool click comes next tick (players click the moment the 500 food is there)
+            self.tool_second_building(nvil)
             if (self.age == 1 and not self.tool_clicked and nvil >= self.stone_target() and self.complete(gs.GRANARY)
-                    and (self.complete(gs.STORAGE_PIT) or self.can_afford(food=600)) and self.can_afford(food=500)
+                    and self.second_stone_building() and self.can_afford(food=500)
                     and t - self.last_train > 2):
                 self.g.stop([tc])
                 self.last_train = t
@@ -1563,7 +1612,7 @@ class Brain:
             return
         if (not self.tool_clicked and self.age == 1 and nvil >= self.stone_target()
                 and self.complete(gs.GRANARY)
-                and (self.complete(gs.STORAGE_PIT) or self.can_afford(food=600)) and self.can_afford(food=500)):
+                and self.second_stone_building() and self.can_afford(food=500)):
             self.g.research(tc, gs.TECH_TOOL_AGE)
             self.tool_clicked = True
             self.last_train = t
@@ -3830,6 +3879,57 @@ class Brain:
                 self.start_build(more_t, spot, self.builders_near(2, *spot),
                                  ("(academy) " if more_t == gs.ACADEMY else "(extra stable) ") + why)
 
+    def second_stone_building(self):
+        """The Tool age needs two Stone age buildings of different kinds (two granaries do not count):
+        the granary and one of pit / barracks / dock, complete."""
+        for bt in (gs.STORAGE_PIT, gs.BARRACKS, gs.DOCK):
+            if self.complete(bt):
+                return True
+        return False
+
+    def tool_second_building(self, nvil):
+        """The Tool age is otherwise ready but no second building stands: a storage pit next to the town
+        (inside the wall, 7-11 tiles from the TC, toward the choppers). The user's 1v2: the Shang bot's
+        only pit was 40 tiles out, its 5 builders idle for 1 700 s - 1 000 food banked, never aged."""
+        t = self.now()
+        tc = self.tc()
+        if (not tc or self.age != 1 or self.tool_clicked or nvil < self.stone_target() - 3
+                or not self.complete(gs.GRANARY) or self.second_stone_building() or self.res(gs.FOOD) < 350):
+            return
+        pend = [p for p in self.pending if p.btype in (gs.STORAGE_PIT, gs.BARRACKS)]
+        if any(t - p.t < 60 for p in pend):
+            return                                       # one is on its way
+        if t - getattr(self, "_tool2_t", -999) < 30 or not self.can_afford(wood=120):
+            return
+        self._tool2_t = t
+        choppers = [v for v in self.s.villagers if self.role_name(v.id) == "wood"]
+        if choppers:
+            ax = sum(v.x for v in choppers) / len(choppers)
+            ay = sum(v.y for v in choppers) / len(choppers)
+        else:
+            ax, ay = tc.x, tc.y
+        sz = SIZES.get(gs.STORAGE_PIT, 2)
+        kc = self.keep_clear()
+        cands = []
+        for i in range(16):
+            a = i * math.pi / 8
+            for r in (7.5, 8.5, 9.5, 11.0):
+                cx, cy = tc.x + math.cos(a) * r, tc.y + math.sin(a) * r
+                x0, y0 = int(round(cx - sz / 2.0)), int(round(cy - sz / 2.0))
+                if not self.footprint_ok(gs.STORAGE_PIT, x0, y0, keep_clear=kc):
+                    continue
+                if getattr(self, "wall", None) is not None and self.wall_sealed and not self.wall_inside(cx, cy):
+                    continue
+                cands.append((math.hypot(cx - ax, cy - ay) + 0.5 * r, x0, y0))
+        spot = self.place_checked(gs.STORAGE_PIT, cands) if cands else None
+        if not spot:
+            self.say("tool age: no spot for a second building near the TC")
+            return
+        builders = self.builders_near(2, *spot)
+        if builders and self.start_build(gs.STORAGE_PIT, spot, builders, "(tool age: second building)"):
+            self.say("tool age: second building - a pit %.0f tiles from the TC (the far one never came)"
+                     % math.hypot(spot[0] - tc.x, spot[1] - tc.y))
+
     def forward_academy(self):
         """One academy near home already: the next one goes near the enemy (hoplites are slow). Returns
         True when it was started now."""
@@ -4256,6 +4356,10 @@ class Brain:
         if cands:
             _, x, y = min(cands)
             return x, y
+        if self.enemy_base is None:
+            g = self.unexplored_goal(u)
+            if g:
+                return g
         tc = self.tc()
         if tc:
             guess = self.enemy_base or (max(2.0, min(W - 3.0, W - tc.x)), max(2.0, min(H - 3.0, H - tc.y)))
@@ -4266,6 +4370,30 @@ class Brain:
             st = min(sites, key=lambda st: st["visit"])
             return st["x"], st["y"]
         return None
+
+    def unexplored_goal(self, u):
+        """The nearest big unexplored part of the map (the user's 1v2: the army searched the corner
+        opposite its TC for five minutes while the user sat in another one)."""
+        vis = self.s.vis
+        W, H = self.r.W, self.r.H
+        best = None
+        step = max(6, W // 12)
+        for gy in range(6, H - 5, step):
+            for gx in range(6, W - 5, step):
+                n = un = 0
+                for dy in (-4, 0, 4):
+                    for dx in (-4, 0, 4):
+                        x, y = gx + dx, gy + dy
+                        if 0 <= x < W and 0 <= y < H:
+                            n += 1
+                            if vis[y * W + x] == 255:
+                                un += 1
+                if not n or un < 0.5 * n:
+                    continue
+                sc = 40.0 * un / n - 0.5 * math.hypot(gx - u.x, gy - u.y)
+                if best is None or sc > best[0]:
+                    best = (sc, gx, gy)
+        return (best[1], best[2]) if best else None
 
     def army_goal(self, u):
         """Fighters move as one group to a shared goal (re-picked every 20 s or when reached);

@@ -187,6 +187,7 @@ class Config:
         self.map_size = "Large"
         self.age = "Default"
         self.resources = "Default"
+        self.victory = "Conquest"
         self.pop_limit = 200
         self.reveal_map = False
         self.player_civ = 0            # 0 = random, 1..16
@@ -244,7 +245,8 @@ class Session:
             self.pool = BotPool(self.game_dir, self.dll, self.log)
         self.pool.ensure(cfg.num_ai)                  # normally already parked since the launcher opened
         lobby.write_settings(self.game_dir, map_size=cfg.map_size, map_type=cfg.map_type, age=cfg.age,
-                             resources=cfg.resources, pop_limit=cfg.pop_limit, reveal_map=cfg.reveal_map)
+                             resources=cfg.resources, pop_limit=cfg.pop_limit, reveal_map=cfg.reveal_map,
+                             victory=getattr(cfg, "victory", "Conquest"))
         lobby.reg_set(lobby.REG_SERVICE, "Internet TCP/IP Connection For DirectPlay")
         self.saved_name = lobby.reg_get(lobby.REG_NAME)
         if getattr(cfg, "player_name", ""):

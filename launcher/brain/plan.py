@@ -136,8 +136,15 @@ def demands(b):
         # one farmer per farm plus a few to finish / start the next ones - never a crowd on the same farms
         # (the user, 13/10: far too many villagers on the same farms; 28 "farmers" for 10 farms)
         n_farm = len(b.complete(gs.FARM))
-        extra = 4 if (stage >= 3 and b.res(gs.FOOD) < 150) else 2     # (food is the Bronze bottleneck)
-        out.append(Demand("farm", n_farm, n_farm + len(b.pending_of(gs.FARM)) + extra, 9))
+        pend = len(b.pending_of(gs.FARM))
+        if stage == 2:
+            # the user: farms right after the market in the Tool age - 4 at once, 8 before the Bronze
+            # click (his 1v2: the Persian bot had none until the Bronze age, 14 food at 1 300 s, no scout)
+            want = 8 if b.res(gs.FOOD) < 400 else 4
+            out.append(Demand("farm", min(want, n_farm + pend + 2), max(want, n_farm + pend + 2), 3.5))
+        else:
+            extra = 4 if b.res(gs.FOOD) < 150 else 2                 # (food is the Bronze bottleneck)
+            out.append(Demand("farm", n_farm, n_farm + pend + extra, 9))
 
     # 6. whoever is left: food first (hunt sites with room were listed above); in stage 1 with no food
     #    work left, scouts go and find some (players never put more than ~7 on wood); else wood
