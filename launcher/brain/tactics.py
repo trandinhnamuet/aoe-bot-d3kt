@@ -20,11 +20,14 @@ CLASSES = (
     ("siege", ("stone thrower", "catapult", "ballista", "helepolis")),
     ("elephant", ("war elephant", "elephant archer", "armored elephant")),
     ("camel", ("camel",)),
-    ("archer", ("archer", "bowman", "slinger")),
+    # (the game's internal names: Soldier-Archer1/2 bowmen, Soldier-Chariot2 the chariot ARCHER - it has no
+    #  "archer" in its name, it was taken for a melee chariot: never dodged, never seen as an archer -
+    #  Soldier-Chariot1 the chariot, Soldier-Phal1 hoplites, Soldier-Inf1 infantry)
+    ("archer", ("archer", "bowman", "slinger", "chariot2")),
     ("chariot", ("chariot",)),
     ("cavalry", ("cavalry", "cataphract", "heavy cavalry")),
-    ("hoplite", ("hoplite", "phalanx", "centurion")),
-    ("infantry", ("clubman", "axeman", "swordsman", "legion")),
+    ("hoplite", ("hoplite", "phalanx", "centurion", "phal")),
+    ("infantry", ("clubman", "axeman", "swordsman", "legion", "soldier-inf")),
     ("scout", ("scout",)),
 )
 VALUE = {"priest": 3.0, "siege": 3.0, "elephant": 4.0, "camel": 1.6, "archer": 1.2, "chariot": 1.8,

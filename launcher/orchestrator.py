@@ -329,8 +329,9 @@ class Session:
             self.slots = {gp.pid: lobby.my_player_number(gp) - 1 for gp in self.bots + [pl]}
             self.bots.sort(key=lambda b: (len(getattr(b, "bot_name", "")), getattr(b, "bot_name", "")))
             together = cfg.ai_team_mode == "together"
+            teams = list(getattr(cfg, "teams", None) or [])     # (tests: [player, AI 1, AI 2, ...], 0 = none)
             lobby.host_set_civ(pl, self.slots[pl.pid], self._civ(cfg.player_civ), log=self.log)
-            lobby.host_set_team(pl, self.slots[pl.pid], 1 if together else 0, log=self.log)
+            lobby.host_set_team(pl, self.slots[pl.pid], teams[0] if teams else (1 if together else 0), log=self.log)
 
             def civ_team(b, civ, team):
                 if not lobby.client_set_civ_team(b, self.slots[b.pid], civ, team, host=pl, log=self.log):
@@ -339,7 +340,8 @@ class Session:
                     lobby.set_team(b, self.slots[b.pid], team, log=self.log)
                     lobby.ready(b, False)
             ths = [threading.Thread(target=civ_team, daemon=True,
-                                    args=(b, self._civ(cfg.ai_civs[i]), 2 if together else 0))
+                                    args=(b, self._civ(cfg.ai_civs[i]),
+                                          teams[i + 1] if len(teams) > i + 1 else (2 if together else 0)))
                    for i, b in enumerate(self.bots)]
             for th in ths:
                 th.start()
@@ -440,7 +442,14 @@ class Session:
         bot_nos = [numbers[b.pid] for b in self.bots]
         for b in self.bots:
             me = numbers[b.pid]
-            if cfg.ai_team_mode == "together":
+            teams = list(getattr(cfg, "teams", None) or [])
+            if teams:
+                team_of = {player_no: teams[0]}
+                for i2, b2 in enumerate(self.bots):
+                    team_of[numbers[b2.pid]] = teams[i2 + 1] if len(teams) > i2 + 1 else 0
+                enemies = [x for x in bot_nos + [player_no] if x != me and
+                           (team_of.get(x, 0) == 0 or team_of.get(x) != team_of.get(me))]
+            elif cfg.ai_team_mode == "together":
                 enemies = [player_no]
             else:
                 enemies = [x for x in bot_nos + [player_no] if x != me]

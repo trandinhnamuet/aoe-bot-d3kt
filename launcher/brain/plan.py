@@ -61,6 +61,11 @@ def demands(b):
             b.far_food = True
             b.say("plan: %d food left on the near bushes - the next food (far patches, herds, elephants) is opened now" % left)
 
+    # 0c. the first granary first (ab1 / cr2v2b: the start's wood went into two houses, 110 left, the berries
+    #     far from the TC, nobody chopping - 7 villagers and ~0 food for ten minutes): berries found, no
+    #     granary yet and under 120 wood -> two chop until it is paid
+    if b.berry_clusters() and not b.any_of(gs.GRANARY) and b.res(gs.WOOD) < 120 and n >= 3:
+        out.append(Demand("wood", 2, 2, 0.9))
     # 1. the first six: berries, or the search for the first bush
     if berries:
         out.append(Demand("berry", min(6, n), 6, 1, indices=BERRY_SIX))   # (the first patch: no 70-food rule)
@@ -138,8 +143,10 @@ def demands(b):
             out.append(Demand(("hunt", key), need, cap, prio,
                               ok=lambda i, v: i >= first6, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
 
-    if getattr(b, "food_desperate", False):
-        out.append(Demand("scout", 2, 4, 1.8, ok=lambda i, v: i >= first6))     # nothing to eat anywhere near: find it
+    if getattr(b, "food_desperate", False) and not (stage >= 2 and b.complete(gs.MARKET)):
+        # nothing to eat anywhere near: find it (not once the market stands - the farms are the food then;
+        # army1: 4 scouts through the whole Tool age)
+        out.append(Demand("scout", 2, 4, 1.8, ok=lambda i, v: i >= first6))
     # 3. scouts: villagers 7 and 9 until enough food is known (the user: they scout on until the food
     #    is found; players still hunt 30+ tiles out in the Tool age)
     # (the user: scouting does not stop before the food known covers what the Bronze age still needs)
@@ -179,6 +186,8 @@ def demands(b):
             # gold piling up while food is the bottleneck (tech2: 17 miners, 1 965 gold banked, 13 farmers,
             # food at 30 - no tech, 4 cavalry): the miners go farming until the bank is spent
             gold_want = min(gold_want, 4)
+        if b.res(gs.GOLD) > 900:
+            gold_want = min(gold_want, 2)          # (the user's 1v4: 1 110 gold banked, 15-200 food)
         wood_want = b.wood_target()
         if b.res(gs.WOOD) > 600:
             wood_want = min(wood_want, 4)
@@ -221,7 +230,9 @@ def demands(b):
             want = 8 if b.res(gs.FOOD) < 400 else 4
             out.append(Demand("farm", min(want, n_farm + pend + 2), max(want, n_farm + pend + 2), 3.5))
         else:
-            extra = 4 if b.res(gs.FOOD) < 150 else 2                 # (food is the Bronze bottleneck)
+            # (food is the Bronze bottleneck, and in Bronze the food is the farms' - the user: the hunters
+            #  come back to the farms; more farmers than farms build the next farms)
+            extra = 6 if b.res(gs.FOOD) < 300 else 3
             out.append(Demand("farm", n_farm, n_farm + pend + extra, 9))
 
     # 6. whoever is left: food first (hunt sites with room were listed above); in stage 1 with no food

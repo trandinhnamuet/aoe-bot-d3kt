@@ -27,6 +27,9 @@ ap.add_argument("--params", default=None)
 ap.add_argument("--tag", default="base")
 ap.add_argument("--no-rec", action="store_true")
 ap.add_argument("--civs", default="", help="comma list of civ names for P1, P2, ... (empty = random)")
+ap.add_argument("--age", default="Default", help="starting age: Default, Tool Age, Bronze Age (micro tests)")
+ap.add_argument("--resources", default="Default", help="Default, Medium, High")
+ap.add_argument("--teams", default="", help="comma list of teams for P1, P2, ... (2v2: 1,1,2,2; empty = all alone)")
 ap.add_argument("--game", default=r"D:\Game\AoE-HD", help="game folder (AoE HD or the normal AOE1R)")
 ap.add_argument("--brain", default="new", choices=("old", "new"), help="new = brain.brain.NewBrain (one allocation table), old = d3kt.Brain")
 args = ap.parse_args()
@@ -137,6 +140,8 @@ def main():
     cfg.player_civ = vals[0] if vals else 0
     cfg.ai_civs = (vals[1:] + [0] * 7)[:7]
     cfg.ai_team_mode = "ffa"
+    cfg.teams = [int(x) for x in args.teams.split(",") if x.strip()] if args.teams else []
+    cfg.age, cfg.resources = args.age, args.resources
     s = orchestrator.Session(r"D:\Game\AoESolo", cfg, log=L, status=lambda m: None, dll=DLL,
                              dplaunch=r"D:\Game\AoESolo\hook\dplaunch.exe", pool=pool)
     s.game_dir = GAME
@@ -164,13 +169,17 @@ def main():
             numbers[gp.pid] = lobby.my_player_number(gp)
         allp = sorted(numbers.values())
         game_limit = args.minutes * 60
+        team_of = {}
+        for i, gp in enumerate([host] + s.bots):
+            team_of[numbers[gp.pid]] = cfg.teams[i] if len(cfg.teams) > i else 0
         for gp in [host] + s.bots:
             me = numbers[gp.pid]
+            foes = [x for x in allp if x != me and (team_of.get(x, 0) == 0 or team_of.get(x) != team_of.get(me))]
             g = aoemem.Game(gp.mem, gp.hook)
             games[me] = g
             stop = (lambda gg=g, mm=gp.mem: stop_flag[0] or
                     (bool(gg.world()) and (mm.u32(gg.world() + 4) or 0) / 1000.0 > game_limit))
-            th = threading.Thread(target=d3kt.run, args=(g, me, [x for x in allp if x != me]),
+            th = threading.Thread(target=d3kt.run, args=(g, me, foes),
                                   kwargs=dict(log=L, stop=stop, pop_limit=200, period=0.6 / max(1.0, args.speed / 2.0)),
                                   daemon=True)
             th.start()
