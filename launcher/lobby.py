@@ -173,6 +173,15 @@ def _xy(gp, x, y):
     return int(round(x * getattr(gp, "sx", 1.0))), int(round(y * getattr(gp, "sy", 1.0)))
 
 
+def _dialog_xy(gp, x, y):
+    """Dialogs keep their size and sit in the screen's centre in both builds (the screens around them
+    scale): a dialog point is its offset from the 1366x768 centre, put on this window's centre. Measured
+    on AOE1R: the Create dialog's OK at (299,379) = (400 - 100, 300 + 80) vs (683 - 100, 384 + 80) in HD."""
+    w = 1366.0 * getattr(gp, "sx", 1.0)
+    h = 768.0 * getattr(gp, "sy", 1.0)
+    return int(round(w / 2.0 + (x - 683))), int(round(h / 2.0 + (y - 384)))
+
+
 def _click(gp, xy, wait=0.6):
     gp.hook.click(*_xy(gp, xy[0], xy[1]))
     time.sleep(wait)
@@ -255,7 +264,8 @@ def host_create(gp, log=print, name=None):
     open_connection(gp, name, log)
     for _ in range(3):
         _click(gp, GAMES_CREATE, 1.5)
-        _click(gp, CREATE_OK, 0.3)
+        gp.hook.click(*_dialog_xy(gp, *CREATE_OK))
+        time.sleep(0.3)
         if wait_screen(gp, "MP Setup Screen", 10):
             n = my_player_number(gp)
             log("host lobby ready, my player number=%s" % n)

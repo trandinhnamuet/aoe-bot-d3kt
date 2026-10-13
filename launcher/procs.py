@@ -168,4 +168,19 @@ def start(game_dir, exe, dll, hidden, log=print, timeout=40, job=True):
     if hidden:
         gw.user32.LockSetForegroundWindow(2)
     log("started %s pid=%d hidden=%s" % (exe, p.pid, hidden))
-    return GameProc(p, hwnd, hook, inject.Mem(p.pid), hidden)
+    gp = GameProc(p, hwnd, hook, inject.Mem(p.pid), hidden)
+    set_menu_scale(gp, game_dir)
+    return gp
+
+
+def set_menu_scale(gp, game_dir):
+    """The normal AoE (AOE1R) draws its menus at a fixed 800x600 in the top-left corner whatever the
+    resolution; the HD build stretches them to the screen. Lobby coordinates are written for 1366x768."""
+    try:
+        import gamedir
+        normal = gamedir.edition_of(game_dir) == gamedir.NORMAL
+    except Exception:  # noqa: BLE001
+        normal = False
+    gp.menu_fixed = normal
+    if normal:
+        gp.sx, gp.sy = 800 / 1366.0, 600 / 768.0

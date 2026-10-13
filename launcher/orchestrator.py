@@ -16,6 +16,77 @@ RESOLUTIONS = {1366: (1366, 768), 1600: (1600, 900), 1920: (1920, 1080)}
 _reg_lock = threading.Lock()
 
 
+# The normal AoE (AOE1R) runs one instance only: at 0x419DE0 a 'jne' leaves the start-up when another
+# instance's window exists. The HD build has a 'jmp' there (always go on). The bot copy gets the same
+# 6 bytes - only the copy, never the player's own EMPIRESX.EXE; only when the original bytes match.
+ONE_INSTANCE_FILE_OFF = 0x191E0          # file offset of VA 0x419DE0 (measured from the PE section table)
+ONE_INSTANCE_ORIG = bytes.fromhex("0f8594000000")
+ONE_INSTANCE_PATCH = bytes.fromhex("e99500000090")
+
+
+def bot_exe_bytes(src_bytes):
+    """What AOEBOT.EXE must contain for this EMPIRESX.EXE: the same bytes, multi-instance."""
+    o = ONE_INSTANCE_FILE_OFF
+    if src_bytes[o:o + 6] == ONE_INSTANCE_ORIG:
+        return src_bytes[:o] + ONE_INSTANCE_PATCH + src_bytes[o + 6:]
+    return src_bytes
+
+
+def ensure_bot_exe(game_dir):
+    """AOEBOT.EXE = the folder's EMPIRESX.EXE, patched to allow several instances when it is the normal
+    build (the HD and the normal build have the same size, so the size alone does not tell a stale copy)."""
+    src = os.path.join(game_dir, PLAYER_EXE)
+    dst = os.path.join(game_dir, BOT_EXE)
+    with open(src, "rb") as f:
+        want = bot_exe_bytes(f.read())
+    have = None
+    if os.path.exists(dst):
+        with open(dst, "rb") as f:
+            have = f.read()
+    if have != want:
+        with open(dst, "wb") as f:
+            f.write(want)
+    ensure_bot_ddraw(game_dir)
+
+
+BOT_DDRAW = """
+[AOEBOT]
+windowed=true
+fullscreen=false
+border=false
+devmode=true
+adjmouse=false
+renderer=gdi
+maxfps=10
+posX=-30000
+posY=-30000
+savesettings=0
+noactivateapp=true
+nonexclusive=true
+resolutions=2
+singlecpu=false
+"""
+
+
+def ensure_bot_ddraw(game_dir):
+    """The bots' window settings in the cnc-ddraw ddraw.ini of the game folder (windowed, off screen,
+    10 fps, no focus). Without the [AOEBOT] section the bot ran full screen and its window never showed
+    on the hidden desktop (AOE1R, 13/10) - every player's own install lacked it."""
+    ini = os.path.join(game_dir, "ddraw.ini")
+    if not os.path.exists(ini):
+        return
+    with open(ini, "r", encoding="latin-1") as f:
+        text = f.read()
+    if "[AOEBOT]" in text.upper():
+        return
+    with open(ini, "a", encoding="latin-1", newline=CRLF) as f:
+        f.write(BOT_DDRAW)
+
+
+CRLF = chr(13) + chr(10)
+
+
+
 class BotPool:
     """Hidden bots started in advance (when the launcher opens), parked on the multiplayer game
     list so that pressing "Choi" only has to open the player's room and let them join."""
@@ -27,6 +98,10 @@ class BotPool:
         self.lock = threading.Lock()
         self.parked = []          # GameProc waiting on "Join Screen"
         self.starting = 0
+        try:
+            ensure_bot_exe(game_dir)  # (warm-up started AOEBOT.EXE before the session made the copy)
+        except OSError as e:
+            log("bot exe copy failed: %r" % (e,))
         self.names_in_use = set()
         self.closed = False
 
@@ -157,11 +232,7 @@ class Session:
         return c if c else lobby.CIV_RANDOM          # "Random" in the lobby: the game rolls the civ itself
 
     def ensure_bot_exe(self):
-        src = os.path.join(self.game_dir, PLAYER_EXE)
-        dst = os.path.join(self.game_dir, BOT_EXE)
-        if not os.path.exists(dst) or os.path.getsize(dst) != os.path.getsize(src):
-            import shutil
-            shutil.copyfile(src, dst)
+        ensure_bot_exe(self.game_dir)
 
     def run(self):
         """Player hosts (visible, straight into the room), pre-started hidden bots join as players 2..N.
@@ -192,7 +263,10 @@ class Session:
                     pl = self._start_player_room()
             self.player = pl
             w, h = RESOLUTIONS.get(cfg.resolution, (1366, 768))
-            pl.sx, pl.sy = w / 1366.0, h / 768.0
+            if not getattr(pl, "menu_fixed", False):
+                procs.set_menu_scale(pl, self.game_dir)
+            if not getattr(pl, "menu_fixed", False):
+                pl.sx, pl.sy = w / 1366.0, h / 768.0
             # 2. parked bots join together (no new window is created while the player's game is up)
             self.status("C\u00e1c m\u00e1y \u0111ang v\u00e0o ph\u00f2ng...")
             # the player's game keeps the foreground for the whole setup (no other window may take it)
@@ -308,7 +382,8 @@ class Session:
             self.log("lobby launch failed: %r -> using the menus" % (e,))
         pl = procs.start(self.game_dir, PLAYER_EXE, self.dll, False, log=self.log)
         w, h = RESOLUTIONS.get(self.cfg.resolution, (1366, 768))
-        pl.sx, pl.sy = w / 1366.0, h / 768.0
+        if not getattr(pl, "menu_fixed", False):
+            pl.sx, pl.sy = w / 1366.0, h / 768.0
         lobby.host_create(pl, log=self.log)
         return pl
 

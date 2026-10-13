@@ -27,6 +27,7 @@ ap.add_argument("--params", default=None)
 ap.add_argument("--tag", default="base")
 ap.add_argument("--no-rec", action="store_true")
 ap.add_argument("--civs", default="", help="comma list of civ names for P1, P2, ... (empty = random)")
+ap.add_argument("--game", default=r"D:\Game\AoE-HD", help="game folder (AoE HD or the normal AOE1R)")
 ap.add_argument("--brain", default="new", choices=("old", "new"), help="new = brain.brain.NewBrain (one allocation table), old = d3kt.Brain")
 args = ap.parse_args()
 if args.params:
@@ -37,7 +38,7 @@ import d3kt  # noqa: E402
 import lobby  # noqa: E402
 import orchestrator  # noqa: E402
 
-GAME = r"D:\Game\AoE-HD"
+GAME = args.game
 DLL = r"D:\Game\AoESolo\hook\aoehook.dll"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "arena")
 PROFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned", "profile.json")

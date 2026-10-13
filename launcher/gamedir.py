@@ -19,8 +19,15 @@ EXE = "EMPIRESX.EXE"
 APP_KEY = r"Software\AoESolo"
 AOE_KEYS = [r"SOFTWARE\WOW6432Node\Microsoft\Games\Age of Empires\1.00",
             r"SOFTWARE\Microsoft\Games\Age of Empires\1.00"]
-KNOWN_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47"}      # the AoE-HD build the addresses were found in
+KNOWN_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47",       # AoE HD (XArena) - the addresses were found here
+              "0a9c9bf528da8fd678abc5db0391436809a977d9"}       # AoE (AOE1R): same layout, only resolution patches
+HD, NORMAL = "AoE HD", "AoE thường (AOE1R)"
+EDITIONS = [HD, NORMAL]
+EDITION_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47": HD, "0a9c9bf528da8fd678abc5db0391436809a977d9": NORMAL}
+EDITION_KEY = {HD: "GameDirHD", NORMAL: "GameDirNormal"}
 COMMON = [r"Program Files\XArena\Game\AoE-HD", r"Program Files (x86)\XArena\Game\AoE-HD",
+          r"Program Files\XArena\Game\AOE1R", r"Program Files (x86)\XArena\Game\AOE1R",
+          r"AOE1R", r"Game\AOE1R", r"Games\AOE1R",
           r"Program Files (x86)\Microsoft Games\Age of Empires", r"Program Files\Microsoft Games\Age of Empires",
           r"AoE-HD", r"Game\AoE-HD", r"Games\AoE-HD", r"AoE", r"Games\AoE", r"Age of Empires"]
 
@@ -143,15 +150,17 @@ def writable(path):
         return False
 
 
-def local_copy_dir():
-    return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AoESolo", "AoE-HD")
+def local_copy_dir(src=None):
+    """%LOCALAPPDATA%\AoESolo\<the source folder's name> (one folder per edition)."""
+    name = os.path.basename(os.path.normpath(src)) if src else "AoE-HD"
+    return os.path.join(os.environ.get("LOCALAPPDATA") or os.path.expanduser("~"), "AoESolo", name or "AoE-HD")
 
 
 def copy_local(src, progress=lambda n, tot: None):
     """Copy the player's own install to a folder AoESolo may write in (the bot copy of the exe and the
     game settings live in the game folder; Program Files needs admin rights). Returns the new path."""
     import shutil
-    dst = local_copy_dir()
+    dst = local_copy_dir(src)
     files = []
     for d, dirs, names in os.walk(src):
         dirs[:] = [x for x in dirs if x not in SKIP_DIRS]
@@ -168,3 +177,75 @@ def copy_local(src, progress=lambda n, tot: None):
     for n in SKIP_DIRS:
         os.makedirs(os.path.join(dst, n), exist_ok=True)
     return dst
+
+
+def _sha1(path):
+    try:
+        h = hashlib.sha1()
+        with open(os.path.join(path, EXE), "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+_EDITION_CACHE = {}
+
+
+def edition_of(path):
+    """AoE HD / AoE thường by the exe's hash, else by the folder name; None when it is neither."""
+    key = os.path.normcase(os.path.normpath(path or ""))
+    if key in _EDITION_CACHE:
+        return _EDITION_CACHE[key]
+    e = _edition_of(path)
+    _EDITION_CACHE[key] = e
+    return e
+
+
+def _edition_of(path):
+    e = EDITION_SHA1.get(_sha1(path) or "")
+    if e:
+        return e
+    n = os.path.basename(os.path.normpath(path)).lower()
+    if "hd" in n:
+        return HD
+    if "1r" in n or "aoe" in n:
+        return NORMAL
+    return None
+
+
+def remember_edition(edition, path):
+    if winreg is None:
+        return
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, APP_KEY) as k:
+            winreg.SetValueEx(k, EDITION_KEY[edition], 0, winreg.REG_SZ, path)
+            winreg.SetValueEx(k, "Edition", 0, winreg.REG_SZ, edition)
+    except OSError:
+        pass
+
+
+def remembered_edition():
+    return _reg(winreg.HKEY_CURRENT_USER, APP_KEY, "Edition") if winreg else None
+
+
+def find_editions(base_dir, deep=False):
+    """{edition: folder} of every install found (the remembered ones first)."""
+    out = {}
+    if winreg is not None:
+        for e, key in EDITION_KEY.items():
+            p = _reg(winreg.HKEY_CURRENT_USER, APP_KEY, key)
+            if has_game(p):
+                out[e] = os.path.normpath(p)
+    paths = [p for p in candidates(base_dir) if has_game(p)]
+    if deep:
+        for drive in _drives():
+            p = _shallow(drive)
+            if p:
+                paths.append(p)
+    for p in paths:
+        e = edition_of(p)
+        if e and e not in out:
+            out[e] = p
+    return out

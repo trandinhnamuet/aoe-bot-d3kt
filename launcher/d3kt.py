@@ -257,6 +257,8 @@ class Brain:
         self.helpers = set()        # villagers pulled in to kill a lured elephant
         self.leads = {}             # villager id -> lure / push site it leads
         self.defenders = {}         # villager id -> enemy scout id it is chasing
+        self.repairers = {}         # villager id -> (wall house id, since) repairing the wall under attack
+        self._wall_hp = {}          # wall house id -> (hp, t) last seen
         self.scout_hunts = {}       # enemy scout id -> (x, y, t) where it attacked us
         self.attackers = []         # enemy soldiers attacking us right now
         self.enemy_army_seen = {}   # id -> (name, x, y, t): enemy soldiers seen (tactics)
@@ -392,7 +394,7 @@ class Brain:
         t0 = time.time()
         times = []
         for step in (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
-                     self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.gate_keeper, self.buildings_program, self.stables,
+                     self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.gate_keeper, self.wall_repair, self.buildings_program, self.stables,
                      self.research_plan, self.army, self.artifacts, self.self_defence, self.watchdogs, self.stats):
             t1 = time.time()
             step()
@@ -656,7 +658,8 @@ class Brain:
         idle_since = wd.setdefault("idle", {})
         for v in self.s.villagers:
             r = self.role.get(v.id)
-            if self.r.busy(v) or isinstance(r, tuple) or v.id in self.defenders or v.id in self.helpers:
+            if self.r.busy(v) or isinstance(r, tuple) or v.id in self.defenders or v.id in self.helpers \
+                    or v.id in self.repairers:
                 idle_since.pop(v.id, None)
                 continue
             t0 = idle_since.setdefault(v.id, t)
@@ -1223,6 +1226,59 @@ class Brain:
             self.say("gate: wall house #%d at (%.0f,%.0f) deleted for %d unit(s) heading to (%.0f,%.0f)" % (
                 h.id, h.x, h.y, len(units), gx, gy))
 
+    def wall_repair(self):
+        """The sealed wall under attack (a wall house losing hp, or an enemy unit acting on it): 2 villagers
+        per attacked house (6 at most) run and repair it - idle first, then wood, then food, then gold
+        (the user). They go back to their work once the house is whole or nobody has hit it for 12 s."""
+        if not self.wall_sealed:
+            if self.repairers:
+                self.repairers.clear()
+            return
+        t = self.now()
+        hs = {h.id: h for h in self.wall_houses()}
+        enemy_tgt = set()
+        for e in self.s.enemy:
+            if e.kind == gs.KIND_COMBAT and e.hp > 0:
+                a = self.r.action(e)
+                if a and a[1]:
+                    enemy_tgt.add(a[1])
+        hit = {}
+        for hid, h in hs.items():
+            prev = self._wall_hp.get(hid)
+            losing = prev is not None and h.hp < prev[0] - 0.01
+            self._wall_hp[hid] = (h.hp, t if (losing or h.ptr in enemy_tgt) else (prev[1] if prev else -99))
+            if (losing or h.ptr in enemy_tgt) or (t - self._wall_hp[hid][1] < 12 and h.hp < h.maxhp - 0.5):
+                hit[hid] = h
+        # release: house whole, gone, or quiet for 12 s
+        for vid, (hid, since) in list(self.repairers.items()):
+            h = hs.get(hid)
+            # (released only when it is whole AND nobody aims at it: repair1 re-sent new villagers to the
+            #  same targeted house every 3 s because a full-hp house released them at once)
+            if h is None or hid not in hit or self.obj_by_id(vid) is None:
+                del self.repairers[vid]
+        if not hit:
+            return
+        rank = {None: 0, "idle": 0, "wood": 1, "berry": 2, "hunt": 2, "farm": 2, "berry2": 2, "gold": 3}
+        busy = set(self.task_owned()) | set(self.defenders) | set(self.helpers)
+        for hid, h in sorted(hit.items(), key=lambda kv: kv[1].hp):
+            have = [vid for vid, (h2, _) in self.repairers.items() if h2 == hid]
+            need = 2 - len(have)
+            if need <= 0 or len(self.repairers) >= 6:
+                continue
+            cands = [v for v in self.s.villagers if v.id not in self.repairers and v.id not in busy
+                     and self.role_name(v.id) in rank and t >= self.retreat_until.get(v.id, 0)]
+            cands.sort(key=lambda v: (0 if self.idle(v) else rank.get(self.role_name(v.id), 4), v.dist(h.x, h.y)))
+            for v in cands[:need]:
+                self.repairers[v.id] = (hid, t)
+                self.order([v], h)                       # right-click on our own building = repair
+            if cands[:need]:
+                self.say("wall house #%d at (%.0f,%.0f) under attack (%.0f/%.0f hp): %d villager(s) repair it" % (
+                    hid, h.x, h.y, h.hp, h.maxhp, len(cands[:need])))
+        for vid, (hid, since) in self.repairers.items():
+            v, h = self.obj_by_id(vid), hs.get(hid)
+            if v is not None and h is not None and self.idle(v):
+                self.order([v], h)
+
     def gate_keeper(self):
         """Every wall slot built = the town is sealed; an open gap is closed (the house rebuilt) once
         none of ours has been within 4 tiles of it for 5 s."""
@@ -1582,7 +1638,7 @@ class Brain:
             if isinstance(r, tuple):            # building or a hunting job
                 if r[0] == "build":
                     continue
-            if v.id in self.defenders or v.id in self.helpers:
+            if v.id in self.defenders or v.id in self.helpers or v.id in self.repairers:
                 continue                        # chasing an enemy scout / killing a lured elephant
             if self.now() < self.retreat_until.get(v.id, 0):
                 continue                        # running from an enemy soldier (self_defence)

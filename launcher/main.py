@@ -82,8 +82,18 @@ class App:
                      values=["1366x768", "1600x900", "1920x1080"]).grid(row=r, column=1, sticky="w", pady=(8, 0))
         r += 1
 
+        ttk.Label(frm, text="Bản game").grid(row=r, column=0, sticky="w", pady=(8, 0))
+        self.editions = gamedir.find_editions(base_dir(), deep=False)
+        first = gamedir.remembered_edition()
+        if first not in self.editions:
+            first = next((e for e in gamedir.EDITIONS if e in self.editions), gamedir.HD)
+        self.edition = tk.StringVar(value=first)
+        cb = ttk.Combobox(frm, textvariable=self.edition, state="readonly", width=16, values=gamedir.EDITIONS)
+        cb.grid(row=r, column=1, sticky="w", pady=(8, 0))
+        cb.bind("<<ComboboxSelected>>", lambda e: self.on_edition())
+        r += 1
         ttk.Label(frm, text="Thư mục game").grid(row=r, column=0, sticky="w", pady=(8, 0))
-        self.game_dir = gamedir.find(base_dir(), deep=False)
+        self.game_dir = self.editions.get(first) or gamedir.find(base_dir(), deep=False)
         self.game_dir_var = tk.StringVar(value=self._short(self.game_dir) if self.game_dir else "(đang tìm...)")
         ttk.Label(frm, textvariable=self.game_dir_var, foreground="#555", width=34).grid(
             row=r, column=1, columnspan=2, sticky="w", pady=(8, 0))
@@ -143,8 +153,24 @@ class App:
     def _short(p):
         return p if len(p) <= 44 else "..." + p[-41:]
 
+    def on_edition(self):
+        """The player picked AoE HD / AoE thường: its folder (found or remembered), else ask for it."""
+        e = self.edition.get()
+        p = self.editions.get(e)
+        if not p:
+            found = gamedir.find_editions(base_dir(), deep=True)
+            self.editions.update(found)
+            p = self.editions.get(e)
+        if p:
+            self.use_game_dir(p)
+        else:
+            self.game_dir_var.set("(chưa thấy %s - bấm Chọn...)" % e)
+            self.choose_game_dir()
+
     def _deep_find(self):
-        p = gamedir.find(base_dir(), deep=True)
+        found = gamedir.find_editions(base_dir(), deep=True)
+        self.editions.update(found)
+        p = self.editions.get(self.edition.get()) or gamedir.find(base_dir(), deep=True)
         self.root.after(0, lambda: self._found(p))
 
     def _found(self, p):
@@ -168,12 +194,12 @@ class App:
         """Take the player's own install; copy it to AoESolo's folder when it cannot be written to (the
         bot copy of the exe and the game settings live in the game folder)."""
         if not gamedir.known_build(p):
-            messagebox.showwarning(APP_TITLE, "EMPIRESX.EXE ở thư mục này khác bản AoE-HD mà bot được viết cho "
-                                              "(bản AoE-HD của XArena). Bot có thể không chạy được.")
+            messagebox.showwarning(APP_TITLE, "EMPIRESX.EXE ở thư mục này khác bản AoE HD / AoE thường (AOE1R) "
+                                              "mà bot được viết cho. Bot có thể không chạy được.")
         if not gamedir.writable(p):
             if not messagebox.askyesno(APP_TITLE, "Thư mục game không ghi được (cần quyền admin):\n%s\n\n"
                                                   "Chép bản game trên máy này sang thư mục riêng của AoESolo để dùng?\n%s"
-                                       % (p, gamedir.local_copy_dir())):
+                                       % (p, gamedir.local_copy_dir(p))):
                 self.game_dir_var.set("(chưa dùng được - bấm Chọn...)")
                 return
 
@@ -182,10 +208,18 @@ class App:
                 self.root.update()
             p = gamedir.copy_local(p, progress=prog)
             self.status.set("Sẵn sàng")
+        e = gamedir.edition_of(p) or self.edition.get()
+        if e in gamedir.EDITIONS and e != self.edition.get():
+            self.edition.set(e)
+        self.editions[self.edition.get()] = p
+        if self.pool is not None and os.path.normpath(p) != os.path.normpath(self.game_dir or ""):
+            old = self.pool
+            threading.Thread(target=old.shutdown, daemon=True).start()   # the other edition's hidden bots go
         self.game_dir = p
         gamedir.remember(p)
+        gamedir.remember_edition(self.edition.get(), p)
         self.game_dir_var.set(self._short(p))
-        self.log("game folder: %s" % p)
+        self.log("game folder: %s (%s)" % (p, self.edition.get()))
         self.pool = orchestrator.BotPool(p, resource_path(os.path.join("bin", "aoehook.dll")), log=self.log)
         self.root.after(1500, self.warm_bots)  # hidden bots get ready while you choose the settings
 
