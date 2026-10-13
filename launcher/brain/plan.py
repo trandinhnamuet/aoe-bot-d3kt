@@ -63,8 +63,7 @@ def demands(b):
 
     # 1. the first six: berries, or the search for the first bush
     if berries:
-        bcap = max(1, min(6, cap))                # (70 food left a picker: the others go elsewhere)
-        out.append(Demand("berry", min(bcap, n), bcap, 1, indices=BERRY_SIX))
+        out.append(Demand("berry", min(6, n), 6, 1, indices=BERRY_SIX))   # (the first patch: no 70-food rule)
     elif not b.any_of(gs.GRANARY):
         out.append(Demand("search", 0, 6, 1, indices=BERRY_SIX))
     else:
@@ -242,6 +241,12 @@ def demands(b):
             out.append(Demand("scout", 0, 4, 17, ok=lambda i, v: i >= first6))
         out.append(Demand("wood", 0, wood_cap, 18, ok=lambda i, v: i >= first6))  # wood is capped at 8 (players: 6-7)
         out.append(Demand("scout", 0, 4 if b.food_short else 2, 19, ok=lambda i, v: i >= first6))        # no food work: look for food (2 at most)
+    if stage <= 2:
+        # while aging the spare hands eat, they do not chop (players: 17-20 on food at the Tool click): every
+        # food site may take more than its usual cap, up to one villager per 70 food left there
+        # (the food sites' caps already take up to 4 more while aging - hunting_plan; here the berries)
+        if berries:
+            out.append(Demand("berry2", 0, max(0, cap - 6), 19.6, ok=lambda i, v: i >= first6))
     out.append(Demand("wood", 0, 99, 20))
     # a villager that stayed idle on a job (IDLEFIX) is kept off that job for 60 s
     ban = {vid: name for vid, (name, until) in getattr(b, "role_ban", {}).items() if until > t and name}

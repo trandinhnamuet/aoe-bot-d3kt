@@ -67,6 +67,7 @@ REVISIT = 90.0           # a known enemy working area is raided again after this
 GOLD_PER_STABLE = 2      # Bronze gold miners: 2 + 2 per stable. Farms bring food slower than mines
                          # bring gold and the TC eats food too: 2 + 4 per stable piled up 1000-1700 gold
 FOOD_PER_VILLAGER = 70   # a food site keeps one villager per 70 food left at most (the user)
+AGING_WOOD_MAX = 7       # choppers before the Bronze click (players: 5-9 at the Tool click)
 WOOD_FLOOR = 4           # villagers always on wood (the user: houses and the wall always need some)
 FARM_RING = 6.5          # no houses closer than this to the TC centre (farms go there)
 FARM_GAP = 2             # one house foundation between a farm and its granary / TC
@@ -985,6 +986,13 @@ class Brain:
                 clusters.append([it[1], it[2], [it]])
         return clusters
 
+    def bush_food(self, it):
+        """Food left on one item of berry_clusters() ((id, x, y) tuples, not objects - age10: read as
+        objects every bush counted 0 food, the patch kept ONE picker and the Stone age never ended)."""
+        b = self.gaia_by_id(it[0]) if isinstance(it, tuple) else it
+        amt = getattr(b, "amount", None) if b is not None else None
+        return float(amt) if amt is not None else 150.0
+
     def known_food(self, rng=60.0):
         """Food we know of within `rng` of the TC: bushes (their amount), live gazelles (150 each),
         elephants not given up (300 each), carcasses with meat left."""
@@ -994,7 +1002,7 @@ class Brain:
         f = 0.0
         for cx, cy, items in self.berry_clusters():
             if math.hypot(cx - tc.x, cy - tc.y) <= rng:
-                f += sum(getattr(b, "amount", 0) for b in items)
+                f += sum(self.bush_food(b) for b in items)
         for aid, (x, y, ty, _) in self.animal_pos.items():
             if math.hypot(x - tc.x, y - tc.y) > rng:
                 continue
@@ -1773,7 +1781,9 @@ class Brain:
             wood_n = int(round(gatherers * tw / (tf + tw)))
         # never fewer than 4 on wood, even with wood to spare (the user); re-computed every tick, so the
         # choppers come back the moment a house / the wall / the farms need wood again
-        wood_n = max(min(WOOD_FLOOR, gatherers), min(wood_n, 12, gatherers))
+        # players at the Tool click (recordings 13/10, 16 player-games): 5-9 on wood, 17-20 on food -
+        # never more than AGING_WOOD_MAX choppers before the Bronze click, whatever the wood forecast says
+        wood_n = max(min(WOOD_FLOOR, gatherers), min(wood_n, AGING_WOOD_MAX, gatherers))
         self._eco = dict(need_food=need_f, need_wood=need_w, gatherers=gatherers, wood_n=wood_n,
                          eta=max(tf / max(1, gatherers - wood_n), tw / max(1, wood_n)) if gatherers else 0)
         t = self.now()
@@ -2039,9 +2049,13 @@ class Brain:
         cap = 0
         grans = self.complete(gs.GRANARY)
         tc = self.tc()
+        all_grans = self.any_of(gs.GRANARY)
+        first_gran = min(all_grans, key=lambda g0: g0.id) if all_grans else None
         for cx, cy, items in self.berry_clusters():
-            # (70 food a villager at least - the user: fewer pickers on an almost empty patch)
-            fcap = max(1, int(sum(getattr(b, "amount", 0) for b in items) // FOOD_PER_VILLAGER))
+            # (70 food a villager at least - the user: fewer pickers on an almost empty patch; never on the
+            #  first patch, its six stay to the last bush - the user)
+            first_patch = (first_gran is not None and math.hypot(first_gran.x - cx, first_gran.y - cy) < 8) or                 (tc is not None and math.hypot(cx - tc.x, cy - tc.y) < 8)
+            fcap = 6 if first_patch else max(1, int(sum(self.bush_food(b) for b in items) // FOOD_PER_VILLAGER))
             if any(math.hypot(g0.x - cx, g0.y - cy) < 8 for g0 in grans) or (not self.any_of(gs.GRANARY)):
                 cap += min(6, len(items), fcap)
             elif tc and math.hypot(cx - tc.x, cy - tc.y) <= self.berry_range():
@@ -2822,6 +2836,10 @@ class Brain:
                 food = self.site_food_left(key)
                 if food is not None:
                     fcap = max(1, int(food // FOOD_PER_VILLAGER))
+                    if fcap > cap and not self.bronze_clicked:
+                        # while aging the spare hands eat, they do not chop (players: 17-20 on food at the
+                        # Tool click): up to 4 more than the usual cap, one per 70 food left
+                        cap = min(fcap, cap + 4)
                     if fcap < cap:
                         load = sum(1 for k in self.hunt_site.values() if k == key)
                         if load > fcap and t - self.__dict__.setdefault("_trim_say", {}).get(key, -99) > 30:
