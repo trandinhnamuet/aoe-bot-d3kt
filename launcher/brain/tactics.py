@@ -125,7 +125,7 @@ def assess(b):
     # the user: Greek / Macedonian build Academies after the first stable, hoplites all game
     want_academy = b.age >= 3 and our_civ in ("Greek", "Macedonian") and not gold_out
     want_archery = b.age >= 3 and (enemy.get("hoplite", 0) + enemy.get("infantry", 0) >= 4 or gold_short or archer_civ
-                                   or gold_out)
+                                   or gold_out or getattr(b, "archer_plan", False))
     done = getattr(b, "techs_done", set())
     ranged = "chariot_archer" if 28 in done else ("improved_bowman" if 56 in done else "bowman")
     n_enemy_bld = sum(1 for o in getattr(b.s, "enemy_all", []) if o.kind == 80)

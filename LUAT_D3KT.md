@@ -129,6 +129,8 @@ Người mới thường kích đời 3 ở phút 13–16.
 
 ### 3.2 Tìm quả và BG
 
+- **Chia bụi quả theo quãng trả thực (bạn yêu cầu 13/10):** dân ăn quả chọn bụi có **đường đi thật** (vòng qua cây, bụi, nhà) từ bụi tới chỗ trả thực gần nhất (BG / nhà chính) ngắn nhất — những bụi đó được ăn trước; ưu tiên 1 dân 1 bụi, bụi đã có người thì tính thêm 2,5 ô nên chỉ chung khi bụi trống kế tiếp xa hơn hẳn; tối đa 3 dân một bụi. Chỗ đặt BG: chấm điểm bằng đường đi thật từ từng bụi tới BG, phạt bụi bị bít, và **phải đi được từ nhà chính tới** (BG trong túi rừng bị loại).
+
 - Dân đầu đi dò thẳng vào **vùng đen gần nhà chính nhất**, mỗi dân một hướng; tới nơi là đổi sang vùng đen kế tiếp. Không đi lại vùng đã thấy, nên vùng dò nở dần ra như vòng tròn.
 
 - Thấy bụi quả đầu tiên thì **tất cả dân đầu kéo về đó** để lộ cả bãi.
@@ -395,6 +397,13 @@ Người mới thường kích đời 3 ở phút 13–16.
   - **Palmyran, Persian đánh lạc đà** làm quân chính (chỉ đổi sang ngựa khi quân địch chủ yếu là lạc đà).
   - **Hết vàng trên bản đồ** (sau 15 phút không còn mỏ vàng nào bot biết, kho < 200 vàng): BL ra **xe chiến (chariot, thực + gỗ)** khi đã có Bánh xe, chưa có thì ra ngựa dò (chỉ thực); bật nhà cung (cung thường → cung A sau Improved Bow → cung R sau Bánh xe); không xây BY nữa (BY tốn vàng). Bánh xe đứng đầu thứ tự nghiên cứu.
   - **Hy Lạp / Macedonia xây nhà BY ngay khi lên xong đời 3** (không chờ đủ thực/vàng dư như nhà quân thứ hai).
+
+- **Lối cung R (học từ trận của bạn — ChimSeDiNet, 13/10 00:19 và 00:49):** nhà cung là nhà thứ hai để lên đời 3 (cùng chợ, không xây chuồng ngựa); giáp da cho cung (~770 s) và Bánh xe ngay sau khi lên đời 3 (~880 s); cung thường trước Bánh xe, cung R từ ~1 000 s; 4–8 nhà cung, 13–15 cung R. Bot: Ai Cập / Assyria / Hittite luôn theo lối này, các phe khác (trừ phe lạc đà và Hy Lạp / Macedonia) ~35 % số trận; một cung thường đi tìm nhà địch thay ngựa dò; thứ tự nghiên cứu Bánh xe → giáp da cung → Improved Bow → giáp vảy cung.
+  - *Lỗi đã sửa:* mã quân cung R bị đảo (bot gửi mã 40 = xe chiến của chuồng ngựa tới nhà cung, game từ chối) nên **chưa bao giờ ra được cung R**; đúng là 41 = cung R (nhà cung), 40 = xe chiến (chuồng ngựa). Giá cung R: 40 thực 70 gỗ.
+- **Cách đánh cung R của bạn (13/10, bổ sung):** trước Bánh xe chỉ **1 cung thường** để thủ, chết mới ra con khác; số nhà cung theo ruộng (**2 ruộng nuôi 1 nhà cung**, 4 nhà cung cần ≥ 8 ruộng); **đợt cung R đầu tiên đi dò nhà địch ngay** (đi nhanh, tầm nhìn rộng), thấy là đánh, không chờ đủ quân; cung thường ở nhà thủ. **Địch bo kín:** bot tìm đường từ chỗ quân đứng tới nhà chính địch; không có đường thì bắn BE của tường (BE nằm giữa phía mình và phía nhà chính địch; tường hai lớp thì bắn lớp ngoài gần nhà chính địch nhất), và **ưu tiên bắn dân địch đi tới được** (dân ra sửa BE / xây BE mới cạnh BE cũ).
+  - *Sửa nghiên cứu:* công nghệ đang được giữ thực (ví dụ Bánh xe 175 thực) chỉ cần đúng giá; công nghệ xếp sau chỉ làm khi còn dư cả phần giữ đó (trước đây Bánh xe không bao giờ đủ thực vì các công nghệ 100 thực chen vào trước, nên lối cung R không lên được cung R).
+  - *Sửa chỗ đặt nhà quân:* đặt ngoài tường hỏng 2 lần thì đặt trong làng (trước đây nhà BY hỏng 8 lần liền ở ngoài tường).
+- **BY tiền tuyến (bạn yêu cầu 13/10):** BY đi chậm, nên khi đã có một nhà BY gần nhà, 2 dân gỗ đi xây nhà BY tiếp theo cách nhà chính địch 20–26 ô về phía mình (không sát công trình địch), để BY sinh ra ở gần trận. Dân đi xây qua tường thì cổng tự mở.
 
 ### 3.8 Tường bằng nhà ("bo nhà")
 

@@ -101,6 +101,8 @@ EARLY_WOOD = 4           # before the first pit: this many on wood, then hunting
 # to get going again (lockstep) -> stopping in front of a chasing elephant killed the lurer
 KEEP_MIN, KEEP_MAX = 4.3, 3.0
 LURE_TIMEOUT = 150.0     # a lure that has not brought the elephant home by then is given up
+BERRY_SHARE_TILES = 2.5   # a bush already worked by one costs this many tiles of extra walk (2-3 may share)
+BERRY_MAX_PER_BUSH = 3
 WAIT_LIMIT = 30.0        # seconds villagers wait at far food for its granary / pit before just gathering      # villagers per elephant (killing at the TC, then eating)
 SCOUT_CALL_R = 5         # a lone enemy scout: villagers this close to where it struck fight back
 SCOUT_CHASE_R = 4        # ... until it is further than this from that spot
@@ -608,7 +610,7 @@ class Brain:
                     and (self.complete(gs.STORAGE_PIT) or self.can_afford(food=600))
                     and self.can_afford(food=500) and len(self.s.villagers) >= 16)
         can_bronze = (self.age == 2 and not self.bronze_clicked and self.complete(gs.MARKET)
-                      and self.complete(gs.STABLE) and self.can_afford(food=800))
+                      and self.complete(self.second_building()) and self.can_afford(food=800))
         if can_tool or can_bronze:
             wd.setdefault("age", t)
             if t - wd["age"] > 15 and not busy and getattr(self, "trained_tick", -1) != self.ticks:
@@ -902,6 +904,7 @@ class Brain:
         unseen = sum(BUILD_COST.get(p.btype, 0) for p in self.pending if not p.confirmed)
         if self.s.res[gs.WOOD] - unseen < cost:
             return False
+        self.gate_request(builders, x, y)          # (builders sent across the sealed wall: a gate opens)
         self.g.build(builders, btype, x, y)
         self.s.res[gs.WOOD] -= cost
         self.mark(builders, ("b", btype))
@@ -933,6 +936,9 @@ class Brain:
                 if t - p.t > 6:
                     self.bad_spots.add((round(p.x, 1), round(p.y, 1), p.btype))
                     self.say("placement failed for %d at (%.1f,%.1f)" % (p.btype, p.x, p.y))
+                    if "outside the wall" in (p.purpose or ""):
+                        of = self.__dict__.setdefault("_outside_fail", {})
+                        of[p.btype] = (of.get(p.btype, (0, t))[0] + 1, t)
                     self.release_builders(p)
                     if p.purpose == "(wood line)" and not self.any_of(gs.STORAGE_PIT):
                         self.woodline_placed = False             # try the wood line pit again elsewhere
@@ -1515,7 +1521,7 @@ class Brain:
             self.last_train = t
             self.say("Iron Age clicked (the user: when Bronze does not end it)")
             return
-        if (not self.bronze_clicked and self.age == 2 and self.complete(gs.MARKET) and self.complete(gs.STABLE)
+        if (not self.bronze_clicked and self.age == 2 and self.complete(gs.MARKET) and self.complete(self.second_building())
                 and self.can_afford(food=800)):
             self.g.research(tc, gs.TECH_BRONZE_AGE)
             self.bronze_clicked = True
@@ -1616,7 +1622,7 @@ class Brain:
         if self.age == 1 and not self.tool_clicked:
             return 6                                     # exactly 6 at the first pit, the rest on food
         if not self.bronze_clicked and not self.rules_broken:
-            need = (0 if self.any_of(gs.MARKET) else 150) + (0 if self.any_of(gs.STABLE) else 150) + 60
+            need = (0 if self.any_of(gs.MARKET) else 150) + (0 if self.any_of(self.second_building()) else 150) + 60
             if self.complete(gs.MARKET) and not self.food_left():
                 need += 150                              # farms are coming
             return 7 if self.res(gs.WOOD) < need else 5
@@ -1786,11 +1792,59 @@ class Brain:
                 return None                         # wait at the new patch for its granary
         a = self.r.action(v)
         mine = a[1] if a else None
+        trips = self.berry_trips()
 
         def load(b):
             n = self.on_target.get(b.ptr, 0)
             return n - 1 if b.ptr == mine else n
-        return min(bushes, key=lambda b: (load(b), b.dist(v.x, v.y)))
+
+        def cost(b):
+            # the walk bush -> food dropsite (tiles, real path) first; a shared bush costs SHARE_TILES
+            # per villager already on it (one per bush when the next free one is not much further),
+            # never more than 3 on one bush; the villager's own walk there only breaks ties
+            n = load(b)
+            if n >= BERRY_MAX_PER_BUSH:
+                return 1e9
+            trip = trips.get(b.ptr)
+            if trip is None:
+                trip = 2.0 * b.dist(v.x, v.y) + 30.0           # (no path known: last)
+            return trip + BERRY_SHARE_TILES * n + 0.15 * b.dist(v.x, v.y)
+        best = min(bushes, key=cost)
+        return best if cost(best) < 1e9 else None
+
+    def berry_trips(self):
+        """{bush ptr: tiles of the walk from the bush to the nearest food dropsite (TC / granary)} along
+        real paths (round trees, bushes, buildings), from one search out of the dropsites' edges; cached
+        while the dropsites stay the same (30 s at most). An unreachable bush is left out."""
+        tc = self.tc()
+        drops = [g0 for g0 in self.complete(gs.GRANARY)] + ([tc] if tc else [])
+        key = (tuple(sorted(d.id for d in drops)), int(self.now() // 30))
+        cache = getattr(self, "_berry_trips", None)
+        if cache is not None and cache[0] == key:
+            return cache[1]
+        pm = self.pm
+        W = pm.W
+        src = []
+        for d in drops:
+            x0, y0 = int(d.x - 1.5), int(d.y - 1.5)
+            src += [(xx, yy) for (xx, yy) in pm.ring_tiles(x0, y0, x0 + 3, y0 + 3) if pm.passable(xx, yy)]
+        out = {}
+        if src:
+            dist = pm.bfs(src, max_cost=10 * 45)
+            for b in self.s.gaia:
+                if b.type != gs.FORAGE or b.amount <= 0:
+                    continue
+                best = None
+                for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1), (1, -1), (-1, 1)):
+                    tx, ty = int(b.x) + dx, int(b.y) + dy
+                    if 0 <= tx < W and 0 <= ty < pm.H:
+                        dd = dist[ty * W + tx]
+                        if dd >= 0 and (best is None or dd < best):
+                            best = dd
+                if best is not None:
+                    out[b.ptr] = best / 10.0
+        self._berry_trips = (key, out)
+        return out
 
     def berry_wait_spot(self):
         """The nearest berry patch (<= 22 tiles) that has no granary yet, where berry villagers wait
@@ -2262,7 +2316,7 @@ class Brain:
         if the 300 wood for the market and the stable are still there afterwards."""
         if not self.tool_clicked or self.bronze_clicked:
             return True
-        need = (0 if self.any_of(gs.MARKET) else 150) + (0 if self.any_of(gs.STABLE) else 150)
+        need = (0 if self.any_of(gs.MARKET) else 150) + (0 if self.any_of(self.second_building()) else 150)
         return self.res(gs.WOOD) - cost >= need
 
     def herd_pit(self, h):
@@ -3281,7 +3335,17 @@ class Brain:
                 pre.append((sum(ds), x0, y0))
         pre.sort()
         cands = []
+        tc = self.tc()
+        town = None
+        if tc is not None:
+            # (the site must be reachable from the TC: a granary in a pocket of trees feeds nobody)
+            tx0, ty0 = int(tc.x - 1.5), int(tc.y - 1.5)
+            town = pm.bfs([(xx, yy) for (xx, yy) in pm.ring_tiles(tx0, ty0, tx0 + 3, ty0 + 3) if pm.passable(xx, yy)],
+                          max_cost=10 * 70)
         for _, x0, y0 in pre[:40]:                       # real paths only for the 40 best straight-line spots
+            if town is not None and not any(town[yy * W + xx] >= 0 for (xx, yy) in pm.ring_tiles(x0, y0, x0 + 3, y0 + 3)
+                                            if 0 <= xx < W and 0 <= yy < pm.H):
+                continue
             if True:
                 for yy in range(y0, y0 + 3):
                     for xx in range(x0, x0 + 3):
@@ -3480,15 +3544,17 @@ class Brain:
     def building_spot(self, btype):
         # the user: the market and the (first) stable must be built for the age anyway - they close a
         # gap of the wall; later military buildings stand outside the wall
-        first_age_building = btype == gs.MARKET or (btype == gs.STABLE and not self.any_of(gs.STABLE))
-        if btype in MILITARY_BUILDINGS and not first_age_building:
+        first_age_building = btype == gs.MARKET or (btype == self.second_building() and not self.any_of(btype))
+        of = self.__dict__.get("_outside_fail", {}).get(btype)
+        outside_ok = not (of and of[0] >= 2 and self.now() - of[1] < 240)   # (units4: 8 failures in a row out there)
+        if btype in MILITARY_BUILDINGS and not first_age_building and outside_ok:
             spot = self.outside_spot(btype)
             if spot:
                 return spot, "(outside the wall)"
         spot = self.next_wall_slot(btype)
         if spot:
             return spot, "(wall)"
-        if btype in MILITARY_BUILDINGS:
+        if btype in MILITARY_BUILDINGS and outside_ok:
             spot = self.outside_spot(btype)
             if spot:
                 return spot, "(outside the wall)"
@@ -3551,12 +3617,36 @@ class Brain:
                 cands.append((abs(d - (R + 4)) - 3.0 * toward + self._near_resources_penalty(cx, cy), x0, y0))
         return self.place_checked(btype, cands)
 
+    def second_building(self):
+        """The Tool-age building next to the market that opens the Bronze age: the archery range in the
+        'cung R' plan (the user's chariot-archer games: no stable at all), else the stable."""
+        return gs.ARCHERY_RANGE if getattr(self, "archer_plan", False) else gs.STABLE
+
+    def decide_army_plan(self):
+        """Once, at the Tool age: the archer plan for archer civs, and for a share of the others (the
+        user plays it in about 2 games of 5); camel civs keep their camels, Greek / Macedonian their
+        hoplites."""
+        if getattr(self, "archer_plan", None) is not None or self.age < 2 and not self.tool_clicked:
+            return
+        civ = tactics.civ_name(self.my_civ)
+        if civ in ("Egyptian", "Assyrian", "Hittite"):
+            plan = True
+        elif civ in tactics.CAMEL_CIVS or civ in ("Greek", "Macedonian"):
+            plan = False
+        else:
+            import random
+            plan = random.Random(self.me * 7919 + int(self.start_time or 0)).random() < 0.35
+        self.archer_plan = plan
+        if plan:
+            self.say("army plan: chariot archers (range instead of stable, Leather Armor Archers + Wheel at Bronze) - %s" % civ)
+
     def buildings_program(self):
         tc = self.tc()
         if not tc:
             return
+        self.decide_army_plan()
         if self.age >= 2:
-            for btype in (gs.MARKET, gs.STABLE):
+            for btype in (gs.MARKET, self.second_building()):
                 if not self.any_of(btype) and not self.pending_of(btype) and self.can_afford(wood=150):
                     spot, why = self.building_spot(btype)
                     if spot:
@@ -3627,13 +3717,23 @@ class Brain:
                     if self.now() - getattr(self, "_acad_say", 0) > 60:
                         self._acad_say = self.now()
                         self.say("academy trains hoplites (%s)" % tactics.civ_name(self.my_civ))
+        if getattr(self, "archer_plan", False) and (self.bronze_clicked or self.rules_broken) and not self.scout_trained:
+            rg = [b for b in self.complete(gs.ARCHERY_RANGE) if not self.r.producing(b)]
+            if rg and self.can_afford(food=40, wood=20):
+                self.g.train(rg[0], gs.BOWMAN)
+                self.scout_trained = True
+                self.say("bowman ordered to find the enemy (archer plan: no stable)")
         if A and A.get("want_archery"):
             # "cung R" once the Wheel is in (70 food 40 wood), else "cung A" after Improved Bow (40 / 20),
             # else the basic bowman; the villagers' 50 food stays untouched
             ranged = A.get("ranged", "bowman")
-            utype, food, wood = {"chariot_archer": (gs.CHARIOT_ARCHER, 70, 40),
+            utype, food, wood = {"chariot_archer": (gs.CHARIOT_ARCHER, 40, 70),
                                  "improved_bowman": (gs.IMPROVED_BOWMAN, 40, 20)}.get(ranged, (gs.BOWMAN, 40, 20))
+            archers_now = [u for u in mil if tactics.unit_class(u.name) in ("archer", "chariot")]
             for b in self.complete(gs.ARCHERY_RANGE):
+                if getattr(self, "archer_plan", False) and ranged == "bowman" and \
+                        (len(archers_now) >= 1 or any(self.r.producing(b2) for b2 in self.complete(gs.ARCHERY_RANGE))):
+                    break                                # (the user: one bowman to defend until the Wheel)
                 if not self.r.producing(b) and self.can_afford_unit(food=food, wood=wood):
                     self.g.train(b, utype)
                     if self.now() - getattr(self, "_rng_say", 0) > 60:
@@ -3659,6 +3759,12 @@ class Brain:
         # the user: Greek / Macedonian - one stable, then every military building is an Academy
         more_t = gs.ACADEMY if academy_civ and self.any_of(gs.STABLE) else gs.STABLE
         n_mil = len(self.any_of(gs.STABLE)) + (len(self.any_of(gs.ACADEMY)) if academy_civ else 0)
+        if getattr(self, "archer_plan", False):
+            more_t = gs.ARCHERY_RANGE                 # (the user: 4-8 ranges, no stable)
+            n_mil = len(self.any_of(gs.ARCHERY_RANGE))
+            want_st = min(8, max(1, len(self.complete(gs.FARM)) // 2))   # (the user: 4 ranges need >= 8 farms)
+        if academy_civ and self.forward_academy():
+            return
         first_academy = academy_civ and not self.any_of(gs.ACADEMY)
         if (self.age >= 3 and (n_mil < want_st or first_academy) and not self.pending_of(more_t)
                 and (busy_st or first_academy or self.can_afford(food=200, gold=200))
@@ -3667,6 +3773,54 @@ class Brain:
             if spot:
                 self.start_build(more_t, spot, self.builders_near(2, *spot),
                                  ("(academy) " if more_t == gs.ACADEMY else "(extra stable) ") + why)
+
+    def forward_academy(self):
+        """One academy near home already: the next one goes near the enemy (hoplites are slow). Returns
+        True when it was started now."""
+        tc = self.tc()
+        if not tc or self.age < 3 or self.pending_of(gs.ACADEMY) or not self.can_afford(wood=150):
+            return False
+        acads = self.any_of(gs.ACADEMY)
+        if not any(a.dist(tc.x, tc.y) <= 30 for a in acads):
+            return False
+        A = self.tactics or {}
+        etc = None
+        for o in getattr(self.s, "enemy_all", []):
+            if o.type == gs.TOWN_CENTER and o.owner in self.enemies:
+                if etc is None or o.dist(tc.x, tc.y) < math.hypot(etc[0] - tc.x, etc[1] - tc.y):
+                    etc = (o.x, o.y)
+        etc = etc or self.enemy_base
+        if etc is None:
+            return False
+        if any(math.hypot(a.x - etc[0], a.y - etc[1]) <= 36 for a in acads):
+            return False                              # a forward academy is there already
+        if t_last := getattr(self, "_fwd_acad_t", None):
+            if self.now() - t_last < 90:
+                return False
+        ux, uy = unit(tc.x - etc[0], tc.y - etc[1])  # from their TC towards ours
+        nx, ny = -uy, ux
+        cands = []
+        for along in (20, 22, 24, 26):
+            for lat in (0, -4, 4, -8, 8):
+                cx, cy = etc[0] + ux * along + nx * lat, etc[1] + uy * along + ny * lat
+                x0, y0 = int(cx - 1.5), int(cy - 1.5)
+                if not self.footprint_ok(gs.ACADEMY, x0, y0):
+                    continue
+                # never next to an enemy building (their army spawns there)
+                if any(b.dist(cx, cy) < 8 for b in self.s.enemy_buildings_seen):
+                    continue
+                cands.append((abs(along - 22) + 0.3 * abs(lat), x0, y0))
+        spot = self.place_checked(gs.ACADEMY, cands) if cands else None
+        self._fwd_acad_t = self.now()
+        if not spot:
+            return False
+        builders = self.builders_near(2, tc.x, tc.y, roles=("wood",)) or self.builders_near(2, tc.x, tc.y)
+        if len(builders) < 1:
+            return False
+        if self.start_build(gs.ACADEMY, spot, builders, "(forward academy, %.0f tiles from the enemy TC)"
+                            % math.hypot(spot[0] - etc[0], spot[1] - etc[1])):
+            return True
+        return False
 
     def research_plan(self):
         """The user: in the long run every useful technology gets researched (never stone mining,
@@ -3710,7 +3864,10 @@ class Brain:
         self._rp_pending = pend
         busy_types = {K.TECHS[tid][1] for tid in active if tid in K.TECHS} | set(pend)
         avail = [tid for tid in avail if tid in K.TECHS]    # (states 1 of pseudo-techs: buildings, civ bonuses)
-        order = [tid for tid in K.TECH_PRIORITY if tid in avail] + [tid for tid in avail if tid not in K.TECH_PRIORITY]
+        prio = K.TECH_PRIORITY
+        if getattr(self, "archer_plan", False):
+            prio = [28, 41, 56, 44] + [x for x in K.TECH_PRIORITY if x not in (28, 41, 56, 44)]
+        order = [tid for tid in prio if tid in avail] + [tid for tid in avail if tid not in prio]
         army_full = len(self.military()) >= 12
         # the food / gold set aside for the first tech in the order whose building is free: the stables and
         # the TC spend every 50-70 food at once, so in Bronze the food never reached a tech's 100-300
@@ -3725,6 +3882,8 @@ class Brain:
                     continue
                 self.research_reserve = dict(cost)
                 break
+        first = True
+        res_r = getattr(self, "research_reserve", None) or {}
         for tid in order:
             tries = self._rp_fail.get(tid, 0)
             if tries >= 4 and t - self._rp_fail_t.get(tid, 0) < 120:
@@ -3732,10 +3891,22 @@ class Brain:
             name, btype, _secs, cost, _req = K.TECHS[tid]
             if btype in busy_types:
                 continue
-            # the villager queue and some army money come first, less so with a full army
-            if not self.can_afford(food=cost.get("food", 0) + (60 if army_full else 100), wood=cost.get("wood", 0),
-                                   gold=cost.get("gold", 0) + ((40 if army_full else 100) if cost.get("gold") else 0)):
-                continue
+            if first and res_r and dict(cost) == res_r:
+                # the tech the food is being kept for: its plain cost is enough (with the old 60-100
+                # margin on top the Wheel's 175 food never came - cheaper techs further down took it:
+                # units4, an archer plan without chariot archers)
+                first = False
+                if not self.can_afford(food=cost.get("food", 0), wood=cost.get("wood", 0), gold=cost.get("gold", 0)):
+                    continue
+            else:
+                first = False
+                # the villager queue and some army money come first, less so with a full army; and the
+                # food kept for the first tech is not touched
+                if not self.can_afford(food=cost.get("food", 0) + (60 if army_full else 100) + res_r.get("food", 0),
+                                       wood=cost.get("wood", 0) + res_r.get("wood", 0),
+                                       gold=cost.get("gold", 0) + ((40 if army_full else 100) if cost.get("gold") else 0)
+                                       + res_r.get("gold", 0)):
+                    continue
             bld = [b for b in self.complete(btype) if not self.r.producing(b)]
             if not bld:
                 self._rp_fail[tid] = tries + 1
@@ -3854,6 +4025,19 @@ class Brain:
         threats += [e for e in self.attackers if e not in threats and e.hp > 0]   # whoever hits our people
         scouts = [u for u in mil if u.type == gs.SCOUT]
         fighters = [u for u in mil if u.type != gs.SCOUT]
+        if getattr(self, "archer_plan", False):
+            # the user: the first chariot archers find the enemy's town (fast, wide sight) and attack what
+            # they meet - no group to wait for; the one bowman before the Wheel defends the town
+            riders = [u for u in fighters if u.type == gs.CHARIOT_ARCHER]
+            if riders and not threats:
+                for u in fighters:
+                    if u not in riders and tc and u.dist(tc.x, tc.y) > 10 and not self.recent(u.id, within=8):
+                        self.move([u], tc.x + 4, tc.y + 4)
+                for u in riders:
+                    self.hit_and_run(u, enemy_army, enemy_vils, threats)
+                for u in mil:
+                    self.hp_prev[u.id] = u.hp
+                return
         if len(fighters) >= ATTACK_GROUP or (A["mode"] == "assault" and len(fighters) >= 2):
             self.attacking = True              # (assault = we are the stronger side: go at once, the user)
         if len(fighters) < 1:
@@ -3914,6 +4098,24 @@ class Brain:
             if not self.recent(u.id, ("o", tgt.id), within=3):
                 self.order([u], tgt)
             return
+        wall = self.enemy_wall_info(u)
+        if wall and wall["sealed"]:
+            # their town is walled in: the villagers we can reach (repairing the wall, building a house
+            # next to it) first, then the wall house nearest to us (the user)
+            reach = [e for e in enemy_vils if wall["reach"](e.x, e.y)]
+            if reach:
+                tgt = min(reach, key=lambda e: e.dist(u.x, u.y))
+                if not self.recent(u.id, ("o", tgt.id), within=3):
+                    self.order([u], tgt)
+                return
+            if wall["houses"] and not threats:
+                b = min(wall["houses"], key=lambda o: o.dist(u.x, u.y))
+                if not self.recent(u.id, ("o", b.id), within=4):
+                    self.order([u], b)
+                    if self.now() - getattr(self, "_wall_hit_say", 0) > 30:
+                        self._wall_hit_say = self.now()
+                        self.say("enemy town walled in, no way in: shooting wall house #%d at (%.0f,%.0f)" % (b.id, b.x, b.y))
+                return
         if enemy_vils:
             tgt = min(enemy_vils, key=lambda e: e.dist(u.x, u.y))
             if self.blocked_chase(u, tgt):
@@ -4028,6 +4230,69 @@ class Brain:
             self.group_goal = g = (p[0], p[1], self.now())
             self.say("army goes to (%.0f,%.0f)" % (p[0], p[1]))
         return g[0], g[1]
+
+    def enemy_wall_info(self, u):
+        """Is the nearest known enemy TC walled in from where unit u stands? One path search out of their
+        TC (every 20 s): u's tile not reached = walled in. Then the wall pieces are their buildings with
+        one side reached from u's side and the other from their TC; reach(x, y) = a tile u can walk to."""
+        tc = self.tc()
+        etc = None
+        for o in getattr(self.s, "enemy_all", []):
+            if o.type == gs.TOWN_CENTER and o.owner in self.enemies and tc:
+                if etc is None or o.dist(tc.x, tc.y) < math.hypot(etc[0] - tc.x, etc[1] - tc.y):
+                    etc = (o.x, o.y)
+        if etc is None:
+            return None
+        cache = getattr(self, "_ewall", None)
+        if cache is None or self.now() - cache["t"] > 20 or cache["etc"] != etc:
+            pm = self.pm
+            W = pm.W
+            x0, y0 = int(etc[0] - 1.5), int(etc[1] - 1.5)
+            inside = pm.bfs([(xx, yy) for (xx, yy) in pm.ring_tiles(x0, y0, x0 + 3, y0 + 3) if pm.passable(xx, yy)],
+                            max_cost=10 * 60)
+            cache = {"t": self.now(), "etc": etc, "inside": inside, "ours": None, "from": None}
+            self._ewall = cache
+        pm = self.pm
+        W = pm.W
+        inside = cache["inside"]
+        ux, uy = int(u.x), int(u.y)
+        if not (0 <= ux < W and 0 <= uy < pm.H):
+            return None
+        if math.hypot(u.x - etc[0], u.y - etc[1]) > 45:
+            return None                                   # far from their town: not our question yet
+        sealed = inside[uy * W + ux] < 0
+        if not sealed:
+            return {"sealed": False}
+        if cache["ours"] is None or cache["from"] is None or math.hypot(cache["from"][0] - u.x, cache["from"][1] - u.y) > 12:
+            cache["ours"] = pm.bfs([(ux, uy)], max_cost=10 * 70)
+            cache["from"] = (u.x, u.y)
+        ours = cache["ours"]
+
+        def reach(x, y):
+            xi, yi = int(x), int(y)
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    xx, yy = xi + dx, yi + dy
+                    if 0 <= xx < W and 0 <= yy < pm.H and ours[yy * W + xx] >= 0:
+                        return True
+            return False
+        through, outer = [], []
+        for b in self.s.enemy_buildings_seen:
+            if math.hypot(b.x - etc[0], b.y - etc[1]) > 40:
+                continue
+            sz = SIZES.get(b.type, 2)
+            bx0, by0 = int(math.floor(b.x - sz / 2.0 + 1e-3)), int(math.floor(b.y - sz / 2.0 + 1e-3))
+            ring = pm.ring_tiles(bx0, by0, bx0 + sz, by0 + sz)
+            side_us = any(0 <= xx < W and 0 <= yy < pm.H and ours[yy * W + xx] >= 0 for (xx, yy) in ring)
+            if not side_us:
+                continue
+            side_them = any(0 <= xx < W and 0 <= yy < pm.H and inside[yy * W + xx] >= 0 for (xx, yy) in ring)
+            (through if side_them else outer).append(b)  # through: one house between us and their TC
+        if through:
+            houses = through
+        else:                                             # a double wall: its outer layer, nearest their TC
+            houses = sorted(outer, key=lambda o: math.hypot(o.x - etc[0], o.y - etc[1]))[:4]
+        return {"sealed": True, "houses": houses, "reach": reach}
 
     def blocked_chase(self, u, tgt):
         """If we cannot get closer to a villager because a building is in the way, hit that building."""

@@ -38,7 +38,7 @@ FARM = 50
 DOCK = 45
 SCOUT = 299
 CAVALRY = 37
-CHARIOT = 41             # stable, needs the Wheel (28): food + wood, no gold
+CHARIOT = 40             # "Soldier-Chariot1": stable, needs the Wheel (28): food + wood, no gold
 CAMEL = 338
 CLUBMAN = 73
 AXEMAN = 74
@@ -47,7 +47,8 @@ HOPLITE = 93             # Soldier-Phal1 (94 Phalanx, 291 Centurion): 60 food 40
 BOWMAN = 4
 IMPROVED_BOWMAN = 5      # "cung A" (needs Improved Bow 56): 40 food 20 wood
 COMPOSITE_BOWMAN = 6     # "cung C" (Iron, Composite Bow 57)
-CHARIOT_ARCHER = 40      # "cung R" (needs the Wheel 28): 70 food 40 wood
+CHARIOT_ARCHER = 41      # "cung R" = "Soldier-Chariot2", archery range, needs the Wheel (28). (It was 40 - the
+                         # stable chariot - so every chariot archer order was refused: recordings 13/10)
 
 TECH_TOOL_AGE = 101
 TECH_BRONZE_AGE = 102
