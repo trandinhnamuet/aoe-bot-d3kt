@@ -3606,18 +3606,23 @@ class Brain:
             if self.r.producing(b):
                 continue
             A = self.tactics or tactics.assess(self)
-            unit_t = gs.CAMEL if A["pick"] == "camel" else gs.CAVALRY
+            unit_t, cost = {"camel": (gs.CAMEL, dict(food=70, gold=60)),
+                            "chariot": (gs.CHARIOT, dict(food=40, wood=60)),
+                            "scout": (gs.SCOUT, dict(food=100))}.get(A["pick"], (gs.CAVALRY, dict(food=70, gold=80)))
             if self.age < 3:
-                unit_t = gs.SCOUT
-            if self.can_afford_unit(food=70, gold=80) or (unit_t == gs.SCOUT and self.can_afford(food=100)):
+                unit_t, cost = gs.SCOUT, dict(food=100)
+            if self.can_afford_unit(**cost):
                 self.g.train(b, unit_t)
+                if A["pick"] in ("chariot", "scout") and A.get("gold_out") and self.now() - getattr(self, "_gold_out_say", 0) > 120:
+                    self._gold_out_say = self.now()
+                    self.say("no gold left on the map: the stables make %s, archers come in" % A["pick"])
         for b in self.complete(gs.BARRACKS):
             if self.rules_broken and not self.r.producing(b) and self.can_afford(food=50):
                 self.g.train(b, gs.CLUBMAN)
         A = self.tactics
         if A and A.get("want_academy"):
             for b in self.complete(gs.ACADEMY):
-                if not self.r.producing(b) and self.can_afford_unit(food=60 + 50, gold=40 + 40):
+                if not self.r.producing(b) and self.can_afford_unit(food=60, gold=40):
                     self.g.train(b, gs.HOPLITE)
                     if self.now() - getattr(self, "_acad_say", 0) > 60:
                         self._acad_say = self.now()
@@ -3629,7 +3634,7 @@ class Brain:
             utype, food, wood = {"chariot_archer": (gs.CHARIOT_ARCHER, 70, 40),
                                  "improved_bowman": (gs.IMPROVED_BOWMAN, 40, 20)}.get(ranged, (gs.BOWMAN, 40, 20))
             for b in self.complete(gs.ARCHERY_RANGE):
-                if not self.r.producing(b) and self.can_afford_unit(food=food + 50, wood=wood + 30):
+                if not self.r.producing(b) and self.can_afford_unit(food=food, wood=wood):
                     self.g.train(b, utype)
                     if self.now() - getattr(self, "_rng_say", 0) > 60:
                         self._rng_say = self.now()
@@ -3654,9 +3659,10 @@ class Brain:
         # the user: Greek / Macedonian - one stable, then every military building is an Academy
         more_t = gs.ACADEMY if academy_civ and self.any_of(gs.STABLE) else gs.STABLE
         n_mil = len(self.any_of(gs.STABLE)) + (len(self.any_of(gs.ACADEMY)) if academy_civ else 0)
-        if (self.age >= 3 and n_mil < want_st and not self.pending_of(more_t)
-                and (busy_st or self.can_afford(food=200, gold=200))
-                and self.can_afford(wood=150 + 75)):    # a stable / academy is 150 wood (+ a farm kept in hand)
+        first_academy = academy_civ and not self.any_of(gs.ACADEMY)
+        if (self.age >= 3 and (n_mil < want_st or first_academy) and not self.pending_of(more_t)
+                and (busy_st or first_academy or self.can_afford(food=200, gold=200))
+                and self.can_afford(wood=150 + (0 if first_academy else 75))):    # 150 wood (+ a farm kept in hand)
             spot, why = self.building_spot(more_t)
             if spot:
                 self.start_build(more_t, spot, self.builders_near(2, *spot),

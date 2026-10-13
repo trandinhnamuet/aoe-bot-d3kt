@@ -38,6 +38,7 @@ FARM = 50
 DOCK = 45
 SCOUT = 299
 CAVALRY = 37
+CHARIOT = 41             # stable, needs the Wheel (28): food + wood, no gold
 CAMEL = 338
 CLUBMAN = 73
 AXEMAN = 74

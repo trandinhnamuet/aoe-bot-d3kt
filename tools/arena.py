@@ -26,6 +26,7 @@ ap.add_argument("--speed", type=float, default=2.0, help="the user plays multipl
 ap.add_argument("--params", default=None)
 ap.add_argument("--tag", default="base")
 ap.add_argument("--no-rec", action="store_true")
+ap.add_argument("--civs", default="", help="comma list of civ names for P1, P2, ... (empty = random)")
 ap.add_argument("--brain", default="new", choices=("old", "new"), help="new = brain.brain.NewBrain (one allocation table), old = d3kt.Brain")
 args = ap.parse_args()
 if args.params:
@@ -130,8 +131,10 @@ def main():
     cfg = orchestrator.Config()
     cfg.num_ai = n_ai
     cfg.map_type, cfg.map_size, cfg.pop_limit = "Hill Country", "Large", 200
-    cfg.player_civ = 0
-    cfg.ai_civs = [0] * 7
+    civs = [c.strip() for c in args.civs.split(",") if c.strip()]
+    vals = [(lobby.CIVS.index(c) + 1) if c in lobby.CIVS else 0 for c in civs]
+    cfg.player_civ = vals[0] if vals else 0
+    cfg.ai_civs = (vals[1:] + [0] * 7)[:7]
     cfg.ai_team_mode = "ffa"
     s = orchestrator.Session(r"D:\Game\AoESolo", cfg, log=L, status=lambda m: None, dll=DLL,
                              dplaunch=r"D:\Game\AoESolo\hook\dplaunch.exe", pool=pool)

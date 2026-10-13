@@ -390,6 +390,12 @@ Người mới thường kích đời 3 ở phút 13–16.
 
 - **BY (Academy) cho Greek / Macedonian** *(bạn đặt 12/10/2026 trưa)*: sau nhà BL đầu, mọi nhà quân tiếp theo là BY (id 0), ra hoplite (Soldier-Phal1 id 93, 60 thực 40 vàng); số nhà quân = dân/10 như BL. **Nhà quân xây ngoài bo**: BL / BY / cung / BK / BB đặt ngay ngoài vành tường (cách tâm bản vẽ + 2,5…+8 ô), lệch về phía địch, để quân ra đời ở ngoài không cần mở cổng; dân đi xây thì gác cổng xoá BE cho ra, xây xong quay vào thì bịt lại. Bản vẽ **rộng** (cả thị trấn, r=10–18, 0 lỗ rò) là bản vẽ duy nhất kín được — vòng nhỏ quanh BG/BS có 7 lỗ rò; trước đây hễ có địch đời 3 hoặc quân địch trong 30 ô là AI đổi về vòng nhỏ (trận gate1: không AI nào kín được). Giờ "bị đe doạ" chỉ làm xây nhanh hơn, không đổi bản vẽ. Bản vẽ tường rộng một khi đã xây ≥ 3 BE thì giữ nguyên (không đổi về nhỏ khi cờ "bị đe doạ" nhấp nháy) để có thể kín.
 
+- **Chọn quân theo phe và theo vàng (bạn yêu cầu 13/10):**
+  - Trước đây hầu hết bot đánh ngựa chém; lạc đà chỉ ra khi địch dùng ngựa; cung chỉ ra 8 lần (cung thường) trong ~60 trận arena, chưa có cung A / cung R; BY = 0 vì nhà BY chỉ được xây ở phút 23–29.
+  - **Palmyran, Persian đánh lạc đà** làm quân chính (chỉ đổi sang ngựa khi quân địch chủ yếu là lạc đà).
+  - **Hết vàng trên bản đồ** (sau 15 phút không còn mỏ vàng nào bot biết, kho < 200 vàng): BL ra **xe chiến (chariot, thực + gỗ)** khi đã có Bánh xe, chưa có thì ra ngựa dò (chỉ thực); bật nhà cung (cung thường → cung A sau Improved Bow → cung R sau Bánh xe); không xây BY nữa (BY tốn vàng). Bánh xe đứng đầu thứ tự nghiên cứu.
+  - **Hy Lạp / Macedonia xây nhà BY ngay khi lên xong đời 3** (không chờ đủ thực/vàng dư như nhà quân thứ hai).
+
 ### 3.8 Tường bằng nhà ("bo nhà")
 
 - **Bo theo địa hình (bạn chỉ ra 12/10/2026 23:00, đang thay thế vòng nhà):** vực, rừng, nước, tàn tích, mép bản đồ là tường có sẵn; chỉ xây BE để **nối các mảng địa hình đó với nhau**, không xây BE thành vòng tròn quanh nhà chính. Cài đặt: `walling.plan_cut` tìm **lát cắt nhỏ nhất** (max-flow/min-cut trên lưới ô, 4 hướng, không cắt góc) ngăn khu nhà (TC + BG + BS) với mọi ô cách TC ≥ 14 ô (hoặc 20 ô nếu rẻ hơn); mỗi ô cắt được phủ bằng móng 2×2; ô không đặt được nhà (khe 1 ô giữa hai rừng) không được cắt, nên đường cắt tự dịch tới chỗ đặt được; cắt lại với nhà đã đặt tới khi không còn đường ra. Ô chưa thám hiểm không được dùng làm tường cũng không được cắt. Mô phỏng 40 bản đồ có rừng: **kín 40/40, trung vị 12 nhà** (vòng cũ: 42 nhà, vẫn rò 1–3 chỗ).

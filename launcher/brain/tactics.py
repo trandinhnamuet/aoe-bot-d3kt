@@ -32,8 +32,10 @@ VALUE = {"priest": 3.0, "siege": 3.0, "elephant": 4.0, "camel": 1.6, "archer": 1
 # what we train against what we see (we have stables; archery / academy come later)
 COUNTER = {"archer": "cavalry", "chariot": "cavalry", "priest": "cavalry", "siege": "cavalry",
            "infantry": "cavalry", "scout": "cavalry", "hoplite": "camel", "cavalry": "camel",
-           "camel": "cavalry", "elephant": "camel", "other": "cavalry"}
+           "camel": "camel", "elephant": "camel", "other": "cavalry"}   # (camels beat cavalry: camels meet camels)
 DEFEND_RADIUS = 22.0     # enemy soldiers this close to our TC are a threat we meet at home
+CAMEL_CIVS = ("Palmyran", "Persian")   # the user: these field camels (their camel advantage)
+GOLD_OUT_AFTER_S = 900.0 # no gold mine known after this long in the game = the map's gold is gone
 ENEMY_MEMORY_S = 120.0   # an enemy soldier seen is counted for this long
 
 
@@ -102,19 +104,28 @@ def assess(b):
             pick = COUNTER[second[1][0]]
     else:
         pick = "cavalry" if ours.get("cavalry", 0) <= ours.get("camel", 0) + 2 else "camel"
+    our_civ = civ_name(getattr(b, "my_civ", 0))
+    if our_civ in CAMEL_CIVS and pick == "cavalry":
+        pick = "camel"                   # the user: Palmyran / Persian field camels
+    # the map's gold is gone (no mine left that we know of, little in the bank): no more gold units -
+    # the stables make chariots (food + wood, after the Wheel) or scouts (food), archers come in
+    gold_out = b.age >= 3 and not b.known_gold() and b.res(gs.GOLD) < 200 \
+        and t - (b.start_time or 0) > GOLD_OUT_AFTER_S
+    if gold_out:
+        pick = "chariot" if 28 in getattr(b, "techs_done", set()) else "scout"
     want_temple = (priest_civ and b.age >= 3) or enemy.get("priest", 0) >= 1
     # archers against infantry / hoplites (the user: "when to use archers"); siege against a walled-in
     # enemy that out-develops us (the user: "BK + stone throwers"); the Iron Age when Bronze does not end it
     # ranged doctrine ("cung A" / "cung R"): the no-gold army. Wanted when the gold cannot feed the
     # stables, when the enemy fields infantry / hoplites, or when our civ is an archer civ.
-    our_civ = civ_name(getattr(b, "my_civ", 0))
     idle_stables = sum(1 for st in b.complete(gs.STABLE) if not b.r.producing(st))
     gold_short = b.age >= 3 and b.res(gs.GOLD) < 80 and (idle_stables >= 1 or not b.complete(gs.STABLE)) \
         and not any(b.role_name(v.id) == "gold" for v in b.s.villagers)
     archer_civ = our_civ in ("Assyrian", "Egyptian", "Hittite")
     # the user: Greek / Macedonian build Academies after the first stable, hoplites all game
-    want_academy = b.age >= 3 and our_civ in ("Greek", "Macedonian")
-    want_archery = b.age >= 3 and (enemy.get("hoplite", 0) + enemy.get("infantry", 0) >= 4 or gold_short or archer_civ)
+    want_academy = b.age >= 3 and our_civ in ("Greek", "Macedonian") and not gold_out
+    want_archery = b.age >= 3 and (enemy.get("hoplite", 0) + enemy.get("infantry", 0) >= 4 or gold_short or archer_civ
+                                   or gold_out)
     done = getattr(b, "techs_done", set())
     ranged = "chariot_archer" if 28 in done else ("improved_bowman" if 56 in done else "bowman")
     n_enemy_bld = sum(1 for o in getattr(b.s, "enemy_all", []) if o.kind == 80)
@@ -123,7 +134,7 @@ def assess(b):
     A = dict(mode=mode, pick=pick, our_v=round(our_v, 1), enemy_v=round(enemy_v, 1), threat_v=round(threat_v, 1),
              ours=ours, enemy=enemy, enemy_vils=enemy_vils, enemy_tc=enemy_tc, enemy_civs=civs, want_temple=want_temple,
              want_archery=want_archery, want_siege=want_siege, want_iron=want_iron, ranged=ranged,
-             gold_short=gold_short, want_academy=want_academy)
+             gold_short=gold_short, want_academy=want_academy, gold_out=gold_out)
     prev = getattr(b, "tactics", None)
     if prev is None or prev["mode"] != mode or prev["pick"] != pick or prev.get("want_temple") != want_temple \
             or prev.get("want_archery") != want_archery or prev.get("want_siege") != want_siege or prev.get("want_iron") != want_iron:
