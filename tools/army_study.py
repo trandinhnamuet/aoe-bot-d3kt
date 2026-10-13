@@ -14,7 +14,7 @@ from mapcap.rawrec import iter_records  # noqa: E402
 RAW = r"D:\Game\AoE-MapCap\dist\Video\Raw"
 WHO = sys.argv[1]
 N = int(sys.argv[2]) if len(sys.argv) > 2 else 12
-BUILD = {12: "barracks", 87: "range", 101: "stable", 0: "academy", 49: "siege", 104: "temple", 84: "market"}
+BUILD = {12: "barracks", 87: "range", 101: "stable", 0: "academy", 49: "siege", 104: "temple", 84: "market", 103: "pit", 68: "granary", 45: "dock"}
 TECH = {28: "Wheel", 55: "?55", 56: "Improved Bow", 57: "Composite Bow", 46: "Tool Working", 51: "Metal Working",
         41: "Leather Archers", 44: "Scale Archers", 42: "Leather Mounted", 45: "Scale Cavalry", 101: "Tool Age",
         102: "Bronze Age", 103: "Iron Age", 107: "Wood Working", 108: "Gold Mining", 32: "Artisanship"}

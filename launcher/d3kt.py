@@ -66,6 +66,8 @@ FARM_RESET_BELOW = 12.0  # ... once some farm's field (unit+0x44, at most 15 in 
 REVISIT = 90.0           # a known enemy working area is raided again after this many seconds
 GOLD_PER_STABLE = 2      # Bronze gold miners: 2 + 2 per stable. Farms bring food slower than mines
                          # bring gold and the TC eats food too: 2 + 4 per stable piled up 1000-1700 gold
+FOOD_PER_VILLAGER = 70   # a food site keeps one villager per 70 food left at most (the user)
+WOOD_FLOOR = 4           # villagers always on wood (the user: houses and the wall always need some)
 FARM_RING = 6.5          # no houses closer than this to the TC centre (farms go there)
 FARM_GAP = 2             # one house foundation between a farm and its granary / TC
 PUSH_RANGE = 16          # herds closer than this are pushed home (the user: further = a pit, the push is too slow)
@@ -104,6 +106,7 @@ LURE_TIMEOUT = 150.0     # a lure that has not brought the elephant home by then
 BERRY_SHARE_TILES = 2.5   # a bush already worked by one costs this many tiles of extra walk (2-3 may share)
 BERRY_MAX_PER_BUSH = 3
 WAIT_LIMIT = 30.0        # seconds villagers wait at far food for its granary / pit before just gathering      # villagers per elephant (killing at the TC, then eating)
+EARLY_DEFENDERS = 5      # before the Bronze click: at most this many villagers fight one early unit
 SCOUT_CALL_R = 5         # a lone enemy scout: villagers this close to where it struck fight back
 SCOUT_CHASE_R = 4        # ... until it is further than this from that spot
 LION_SAFE = 7.0          # scouting villagers keep this far from lions (their attack trigger range)
@@ -151,14 +154,27 @@ TECH_WOODWORKING = 107
 TECH_WHEEL = 28
 
 BUILD_COST = {gs.HOUSE: 30, gs.GRANARY: 120, gs.STORAGE_PIT: 120, gs.MARKET: 150, gs.STABLE: 150, gs.TEMPLE: 200,
-              gs.FARM: 75, gs.BARRACKS: 125, gs.ARCHERY_RANGE: 150, gs.SIEGE_WORKSHOP: 200, gs.ACADEMY: 150}
+              gs.FARM: 75, gs.BARRACKS: 125, gs.ARCHERY_RANGE: 150, gs.SIEGE_WORKSHOP: 200, gs.ACADEMY: 150,
+              gs.GOVERNMENT_CENTER: 175}
 SIZES = {gs.HOUSE: 2, gs.FARM: 3, gs.GRANARY: 3, gs.STORAGE_PIT: 3, gs.MARKET: 3, gs.STABLE: 3,
-         gs.BARRACKS: 3, gs.TOWN_CENTER: 3, gs.TEMPLE: 3, gs.ARCHERY_RANGE: 3, gs.SIEGE_WORKSHOP: 3, gs.ACADEMY: 3}
+         gs.BARRACKS: 3, gs.TOWN_CENTER: 3, gs.TEMPLE: 3, gs.ARCHERY_RANGE: 3, gs.SIEGE_WORKSHOP: 3, gs.ACADEMY: 3,
+         gs.GOVERNMENT_CENTER: 3}
 MILITARY_BUILDINGS = (gs.STABLE, gs.ACADEMY, gs.ARCHERY_RANGE, gs.SIEGE_WORKSHOP, gs.BARRACKS)
 
 
 def game_s(snap):
     return snap.time / 1000.0
+
+
+BRONZE_WORDS = ("cavalry", "cataphract", "camel", "chariot", "elephant", "hoplite", "phalanx", "centurion",
+                "horse archer", "swordsman", "legion", "improved bowman", "composite", "priest", "stone thrower",
+                "catapult", "ballista", "helepolis")
+
+
+def bronze_unit(e):
+    """A Bronze (or later) unit: villagers never fight it, they run (the user)."""
+    n = (e.name or "").lower()
+    return any(w in n for w in BRONZE_WORDS) or e.type in (gs.CAVALRY, gs.CAMEL, gs.CHARIOT, gs.CHARIOT_ARCHER, gs.HOPLITE)
 
 
 def unit(vx, vy):
@@ -395,7 +411,8 @@ class Brain:
         times = []
         for step in (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
                      self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.gate_keeper, self.wall_repair, self.buildings_program, self.stables,
-                     self.research_plan, self.army, self.artifacts, self.self_defence, self.watchdogs, self.stats):
+                     self.research_plan, self.army, self.artifacts, self.self_defence, self.watchdogs, self.stats,
+                     self.food_audit):
             t1 = time.time()
             step()
             times.append((time.time() - t1, step.__name__))
@@ -609,7 +626,7 @@ class Brain:
         # 2. an age-up that could be clicked
         busy = self.r.producing(tc)
         can_tool = (self.age == 1 and not self.tool_clicked and self.complete(gs.GRANARY)
-                    and (self.complete(gs.STORAGE_PIT) or self.can_afford(food=600))
+                    and self.second_stone_building()
                     and self.can_afford(food=500) and len(self.s.villagers) >= 16)
         can_bronze = (self.age == 2 and not self.bronze_clicked and self.complete(gs.MARKET)
                       and self.complete(self.second_building()) and self.can_afford(food=800))
@@ -628,6 +645,18 @@ class Brain:
                 wd.pop("age", None)
         else:
             wd.pop("age", None)
+        # 2b. a villager boxed in (houses / buildings / trees round it): the nearest of our houses goes
+        self.free_trapped()
+        # 2c. every gatherer checked: carrying the same amount for 45 s = it neither gathers nor delivers
+        self.check_gatherers()
+        # 2d. a builder whose site is gone (finished, deleted, dropped) gets its job back (age4: 3-4
+        #     'builders' stood 165 s by a pit finished long before)
+        in_sites = {vid for p in self.pending for vid in p.ids}
+        for v in self.s.villagers:
+            r = self.role.get(v.id)
+            if isinstance(r, tuple) and r[0] == "build" and v.id not in in_sites and not self.r.busy(v):
+                self.role.pop(v.id, None)
+                self.say("WORKDBG villager #%d at (%.0f,%.0f): builder of a site that is gone - back to work" % (v.id, v.x, v.y))
         # 3. nobody on food before Bronze
         food_roles = ("hunt", "berry", "farm")
         n_food = sum(1 for v in self.s.villagers if self.role_name(v.id) in food_roles)
@@ -663,10 +692,131 @@ class Brain:
                 idle_since.pop(v.id, None)
                 continue
             t0 = idle_since.setdefault(v.id, t)
-            if t - t0 > 8:
+            if t - t0 > 5:
                 idle_since[v.id] = t
                 self.work(v, r, force=True)
                 wd["idle_fixes"] = wd.get("idle_fixes", 0) + 1
+                rep = wd.setdefault("idle_rep", {})
+                c = rep.get(v.id)
+                if c is None or math.hypot(v.x - c[1], v.y - c[2]) > 2 or t - c[3] > 60:
+                    rep[v.id] = c = [0, v.x, v.y, t]
+                c[0] += 1
+                if c[0] == 4 and self.role_name(v.id) == "hunt" and self.waiting_hunter(v):
+                    rep.pop(v.id, None)                  # (a lure waiter waits: that is its job)
+                elif c[0] == 4:
+                    # (the user: every villager checked often - one that stays idle after 4 re-orders is
+                    #  given up by its job: its hunt site / role is dropped so the allocator moves it)
+                    self.say("IDLEFIX villager #%d (%s) at (%.0f,%.0f) still idle after 4 re-orders in %.0f s: role dropped"
+                             % (v.id, self.role_name(v.id), v.x, v.y, t - c[3]))
+                    rname = self.role_name(v.id)
+                    self.hunt_site.pop(v.id, None)
+                    if not isinstance(r, tuple):
+                        self.role.pop(v.id, None)
+                        if rname:
+                            self.__dict__.setdefault("role_ban", {})[v.id] = (rname, t + 60)
+                    rep.pop(v.id, None)
+
+    def food_audit(self):
+        """Every 5 s: every gazelle / elephant / carcass / bush on explored ground is followed.
+          gazelle: first hit (hp below max) -> death: seconds and tiles it ran in between ("hops");
+          carcass: food eaten (went down with one of ours on it) vs rotted (went down with nobody on it,
+                   or vanished with meat left);
+          known food nobody works on (40 tiles from the TC), scouting, explored ground.
+        A FOODAUDIT line every 60 s and at the Tool / Bronze clicks; tools/food_audit.py sums them up."""
+        t = self.now()
+        if t - getattr(self, "_fa_t", -99) < 5:
+            return
+        self._fa_t = t
+        A = self.__dict__.setdefault("_fa", {"gaz": {}, "car": {}, "eaten": 0.0, "rot": 0.0, "hits": 0,
+                                             "dead": 0, "hop_s": [], "hop_d": [], "alive_left": 0, "bush0": {},
+                                             "bush_eaten": 0.0})
+        tc = self.tc()
+        if not tc:
+            return
+        explored = self.s.explored
+        occ = self.target_counts()
+        seen_ids = set()
+        for o in self.s.gaia:
+            if not explored(o.x, o.y):
+                continue
+            if o.type == gs.GAZELLE and o.cls != gs.CLS_DEAD:
+                seen_ids.add(("g", o.id))
+                g = A["gaz"].setdefault(o.id, {"t0": t, "hit": None, "hx": None, "hy": None, "dead": False})
+                if g["hit"] is None and 0 < o.hp < (o.maxhp or 8) - 0.01:
+                    g["hit"], g["hx"], g["hy"] = t, o.x, o.y
+                    A["hits"] += 1
+                if not g["dead"] and o.hp <= 0:
+                    g["dead"] = True
+                    A["dead"] += 1
+                    if g["hit"] is not None:
+                        A["hop_s"].append(t - g["hit"])
+                        A["hop_d"].append(math.hypot(o.x - g["hx"], o.y - g["hy"]))
+                g["x"], g["y"] = o.x, o.y
+            elif (o.cls == gs.CLS_DEAD and o.type in gs.MEAT) or (o.type == gs.GAZELLE and o.hp <= 0) \
+                    or (o.type == gs.ELEPHANT and o.hp <= 0):
+                if o.amount <= 0:
+                    continue
+                seen_ids.add(("c", o.ptr))
+                c = A["car"].get(o.ptr)
+                if c is not None and o.amount < c["amt"] - 0.01:
+                    d = c["amt"] - o.amount
+                    if occ.get(o.ptr, 0) > 0 or c.get("worked"):
+                        A["eaten"] += d
+                    else:
+                        A["rot"] += d
+                A["car"][o.ptr] = {"amt": o.amount, "x": o.x, "y": o.y, "worked": occ.get(o.ptr, 0) > 0}
+            elif o.type == gs.FORAGE and o.amount > 0:
+                b0 = A["bush0"].get(o.ptr)
+                if b0 is not None and o.amount < b0 - 0.01:
+                    A["bush_eaten"] += b0 - o.amount
+                A["bush0"][o.ptr] = o.amount
+        for ptr, c in list(A["car"].items()):
+            if ("c", ptr) not in seen_ids:
+                if c["amt"] > 5 and self.s.explored(c["x"], c["y"]):
+                    A["rot"] += c["amt"]                 # vanished with meat left = rotted away
+                del A["car"][ptr]
+        say_now = t - getattr(self, "_fa_say", -99) >= 60
+        for flag in ("tool_clicked", "bronze_clicked"):
+            if getattr(self, flag) and not A.get(flag):
+                A[flag] = True
+                say_now = True
+        if not say_now:
+            return
+        self._fa_say = t
+        R = 40
+        hunted = {k for k in self.hunt_site.values()}
+        alive_g = [(gid, g) for gid, g in A["gaz"].items() if not g["dead"] and ("g", gid) in seen_ids
+                   and math.hypot(g["x"] - tc.x, g["y"] - tc.y) <= R]
+        hit_alive = sum(1 for _gid, g in alive_g if g["hit"] is not None and t - g["hit"] > 10)
+        eles = [o for o in self.s.gaia if o.type == gs.ELEPHANT and o.hp > 0 and explored(o.x, o.y)
+                and o.dist(tc.x, tc.y) <= R]
+        bushes = [o for o in self.s.gaia if o.type == gs.FORAGE and o.amount > 0 and explored(o.x, o.y)
+                  and o.dist(tc.x, tc.y) <= R]
+        idle_bush = sum(o.amount for o in bushes if occ.get(o.ptr, 0) == 0)
+        cars = [c for c in A["car"].values() if math.hypot(c["x"] - tc.x, c["y"] - tc.y) <= R]
+        idle_meat = sum(c["amt"] for c in cars if not c["worked"])
+        # explored share of the disc of radius 30 round the TC
+        W, H = self.r.W, self.r.H
+        tot = ex = 0
+        for yy in range(max(0, int(tc.y) - 30), min(H, int(tc.y) + 31), 3):
+            for xx in range(max(0, int(tc.x) - 30), min(W, int(tc.x) + 31), 3):
+                if (xx - tc.x) ** 2 + (yy - tc.y) ** 2 <= 900:
+                    tot += 1
+                    ex += 1 if explored(xx, yy) else 0
+        roles = collections.Counter(self.role_name(v.id) for v in self.s.villagers)
+        hs = sorted(A["hop_s"])
+        med_s = hs[len(hs) // 2] if hs else 0
+        hd = sorted(A["hop_d"])
+        med_d = hd[len(hd) // 2] if hd else 0
+        far_hop = sum(1 for d in A["hop_d"] if d > 3)
+        self.say("FOODAUDIT gazelles: %d hit, %d dead (hit->death median %.0f s, %.1f tiles, %d ran 3+ tiles), "
+                 "%d alive within %d (%d hit and still alive 10+ s) | elephants alive within %d: %d | meat eaten %.0f, "
+                 "rotted %.0f, lying unworked %.0f | bushes eaten %.0f, unworked within %d: %.0f food on %d bushes | "
+                 "scouts %d, explored %d%% of r30 | hunt sites %d | food %d" % (
+                     A["hits"], A["dead"], med_s, med_d, far_hop, len(alive_g), R, hit_alive, R, len(eles),
+                     A["eaten"], A["rot"], idle_meat, A["bush_eaten"], R, idle_bush,
+                     sum(1 for o in bushes if occ.get(o.ptr, 0) == 0), roles.get("scout", 0),
+                     100 * ex // max(1, tot), len(hunted), self.res(gs.FOOD)))
 
     def stats(self):
         """One line every 20 game seconds: the numbers needed to tune the economy."""
@@ -679,10 +829,26 @@ class Brain:
             r = self.role_name(v.id) or "-"
             roles[r] = roles.get(r, 0) + 1
         idle_roles = {}
+        isince = self.__dict__.setdefault("_idle_since", {})
+        long_idle = []
+        alive_ids = set()
         for v in self.s.villagers:
+            alive_ids.add(v.id)
             if not self.r.busy(v):
                 r = self.role_name(v.id) or "-"
                 idle_roles[r] = idle_roles.get(r, 0) + 1
+                t0 = isince.setdefault(v.id, (t, v.x, v.y))
+                if math.hypot(v.x - t0[1], v.y - t0[2]) > 3:
+                    isince[v.id] = t0 = (t, v.x, v.y)
+                if t - t0[0] >= 40:
+                    long_idle.append("#%d %s@%.0f,%.0f %.0fs" % (v.id, r, v.x, v.y, t - t0[0]))
+            else:
+                isince.pop(v.id, None)
+        for vid in [k for k in isince if k not in alive_ids]:
+            del isince[vid]
+        if long_idle:
+            # (the user: no villager may stand doing nothing - every one idle 40+ s at the same spot)
+            self.say("IDLEDBG long idle: %s" % " ".join(long_idle[:10]))
         idle = "%d(%s)" % (sum(idle_roles.values()), ",".join("%s:%d" % kv for kv in sorted(idle_roles.items())))
         tk = getattr(self, "tick_times", [])
         acc = getattr(self, "tc_idle_acc", {})
@@ -894,9 +1060,11 @@ class Brain:
                 return self.break_rules("enemy P%d has %d military units before Bronze Age" % (owner, len(units)))
 
     def break_rules(self, why):
+        # (the user, 13/10: the Bronze click and a Bronze army stay the goal - no barracks, no clubmen,
+        #  no early army; only the villagers next to the one hit fight back, see self_defence)
         self.rules_broken = True
         self.broken_reason = why
-        self.say("D3KT broken by enemy (%s) -> all rules off, fighting back" % why)
+        self.say("D3KT broken by enemy (%s) -> villagers near the attack fight back, the economy goes on" % why)
 
     # ================================================================ construction bookkeeping
     def start_build(self, btype, spot, builders, purpose=""):
@@ -1543,6 +1711,82 @@ class Brain:
         return pen
 
     # ================================================================ town center
+    # gather rates per villager per game second, walking included (measured by players: berries
+    # ~0.3, hunting ~0.45, farms ~0.4, wood ~0.4 with a pit close by)
+    RATE_FOOD, RATE_WOOD = 0.38, 0.40
+
+    def eco_forecast(self):
+        """What the current step still costs, beyond the stock, and how many of the gatherers should chop
+        so that the food and the wood are both there at the same moment.
+        Stone age: the Tool click (500 food), the villagers still to make (50 each), their houses, the
+        granary / pit still missing, the wall houses left, and half of the Tool age's wood (market and
+        second building - built the moment the Tool age comes). Tool age: the Bronze click (800 food),
+        market, second building, 8 farms, the wall houses left.
+        Returns dict(need_food, need_wood, gatherers, wood_n) or None (no forecast for this stage)."""
+        if getattr(self, "_eco_tick", None) == self.ticks:
+            return self._eco
+        self._eco_tick = self.ticks
+        self._eco = None
+        n = len(self.s.villagers)
+        if self.bronze_clicked or self.age >= 3:
+            return None
+        wall_left = 0
+        if getattr(self, "wall_fixed_R", None) is not None and not self.wall_sealed:
+            wall_left = len(self.wall_slots())
+        has = lambda bt: bool(self.any_of(bt))   # noqa: E731
+        if self.age == 1 and not self.tool_clicked:
+            if not self.woodline_placed:
+                return None                      # (until the first pit every spare villager chops)
+            left = max(0, self.stone_target() - n)
+            food = 500 + self.vil_cost * left
+            houses_want = max(0, -(-(self.stone_target() + 2 - 4) // 4) - len(self.any_of(gs.HOUSE)))
+            wood = 30 * houses_want + (0 if has(gs.GRANARY) else 120) + (0 if self.second_stone_building() else 120)
+            # half of the wall in the Stone age, the rest in the Tool age (age6: the whole wall's 800 wood
+            # in the Stone forecast put 12 on wood, 5 hunting with room for 15, Tool clicked at 12:12)
+            wood += 15 * wall_left
+            wood += 0.5 * ((0 if has(gs.MARKET) else 150) + (0 if has(self.second_building()) else 150))
+        elif not self.bronze_clicked:
+            food = 800
+            wood = (0 if has(gs.MARKET) else 150) + (0 if has(self.second_building()) else 150)
+            wood += 30 * wall_left
+            if has(gs.MARKET):
+                # farms only once the market stands (before it no farm can be built: age5 kept 18 on wood
+                # for 8 farms during the Tool research, 940 wood, food stuck at 131), and only as many as
+                # the natural food left does not cover (4 farmers on wild food = 4 farms fewer)
+                wild = sum(self.site_cap.get(k, 0) for (k, _x, _y, _st) in self.sites) + self.berry_capacity()
+                farms_want = max(0, min(8, 12 - wild))
+                wood += 75 * max(0, farms_want - len(self.any_of(gs.FARM)))
+        else:
+            return None
+        # (the user: there is always a house or a wall house to build - a little wood too many does no
+        #  harm, too little is a big problem: 150 wood kept on top of the step's needs)
+        wood += 150
+        need_f = max(0.0, food - self.res(gs.FOOD))
+        need_w = max(0.0, wood - self.res(gs.WOOD))
+        busy = sum(1 for v in self.s.villagers if isinstance(self.role.get(v.id), tuple)
+                   or self.role_name(v.id) in ("scout", "search", "gold") or v.id in self.task_owned())
+        gatherers = max(0, n - busy)
+        tf, tw = need_f / self.RATE_FOOD, need_w / self.RATE_WOOD
+        if tf + tw <= 0:
+            wood_n = WOOD_FLOOR
+        else:
+            wood_n = int(round(gatherers * tw / (tf + tw)))
+        # never fewer than 4 on wood, even with wood to spare (the user); re-computed every tick, so the
+        # choppers come back the moment a house / the wall / the farms need wood again
+        wood_n = max(min(WOOD_FLOOR, gatherers), min(wood_n, 12, gatherers))
+        self._eco = dict(need_food=need_f, need_wood=need_w, gatherers=gatherers, wood_n=wood_n,
+                         eta=max(tf / max(1, gatherers - wood_n), tw / max(1, wood_n)) if gatherers else 0)
+        t = self.now()
+        if t - getattr(self, "_eco_say", -99) >= 30:
+            self._eco_say = t
+            on_food = sum(1 for v in self.s.villagers if self.role_name(v.id) in ("berry", "hunt", "farm", "berry2"))
+            on_wood = sum(1 for v in self.s.villagers if self.role_name(v.id) == "wood")
+            self.say("ECO step needs food %.0f wood %.0f (stock %d / %d): %d gatherers -> %d wood, %d food "
+                     "(now %d wood, %d food), both in ~%.0f s" % (
+                         need_f, need_w, self.res(gs.FOOD), self.res(gs.WOOD), gatherers, wood_n,
+                         gatherers - wood_n, on_wood, on_food, self._eco["eta"]))
+        return self._eco
+
     def stone_target(self):
         """Villagers to make before Tool Age: as many as there is food work for (hunting sites, berries)
         plus the 6 on wood, 2 scouts and a builder - between 16 and 22. Every villager beyond that
@@ -1726,11 +1970,16 @@ class Brain:
             return 99                                    # until the first pit every spare villager chops
         if self.age == 1 and not self.tool_clicked:
             return 6                                     # exactly 6 at the first pit, the rest on food
-        if not self.bronze_clicked and not self.rules_broken:
+        if not self.bronze_clicked:
             need = (0 if self.any_of(gs.MARKET) else 150) + (0 if self.any_of(self.second_building()) else 150) + 60
+            if self.complete(gs.MARKET) or self.any_of(gs.MARKET):
+                # farms right after the market (4 at least - fix1v2b: the Persian bot had 7 choppers,
+                # 20-90 wood, one farm finished 120 s after the market)
+                need += 75 * max(0, 4 - len(self.any_of(gs.FARM)))
             if self.complete(gs.MARKET) and not self.food_left():
-                need += 150                              # farms are coming
-            return 7 if self.res(gs.WOOD) < need else 5
+                need += 150                              # more farms are coming
+            wood = self.res(gs.WOOD)
+            return 10 if wood < need - 150 else (7 if wood < need else 5)
         wood = self.res(gs.WOOD)
         if self.age >= 3:
             return 4 if wood > 500 else (6 if wood > 200 else 8)   # farms, houses, stables
@@ -1746,6 +1995,9 @@ class Brain:
         if getattr(self, "_br_tick", None) == self.ticks:
             return self._br
         self._br_tick, self._br = self.ticks, BERRY_NEAR
+        if not self.bronze_clicked and (self.far_food_open() or self.food_emergency or self.food_short):
+            self._br = 999                               # (the user: a patch anywhere while aging, nearest first)
+            return self._br
         if self.food_emergency or self.food_short:
             self._br = 999 if self.food_desperate else BERRY_POOR
             return self._br
@@ -1761,21 +2013,45 @@ class Brain:
                 self._br = BERRY_POOR
         return self._br
 
+    def site_food_left(self, key):
+        """Food still to take at a hunting site: carcasses' meat, live gazelles of its herd (150 each), a
+        live elephant being killed (300). None when unknown."""
+        if key[0] == "meat":
+            return sum(m.amount for m in self.meat_groups.get(key, []))
+        if key[0] == "herd" and key[1] in self.herds:
+            h = self.herds[key[1]]
+            return sum(c.amount for c in self.herd_carcasses(h)) + 150.0 * len(self.herd_live(h))
+        if key[0] == "lure":
+            e = self.gaia_by_id(key[1])
+            if e is not None and e.hp > 0:
+                return 300.0
+            L = self.lures.get(key[1])
+            if L is not None:
+                car = [m for m in self.meat() if m.type == gs.DEAD_ELEPHANT and m.dist(L.x, L.y) < 6]
+                if car:
+                    return sum(m.amount for m in car)
+        return None
+
+    def far_food_open(self):
+        return bool(getattr(self, "far_food", False))
+
     def berry_capacity(self):
         cap = 0
         grans = self.complete(gs.GRANARY)
         tc = self.tc()
         for cx, cy, items in self.berry_clusters():
+            # (70 food a villager at least - the user: fewer pickers on an almost empty patch)
+            fcap = max(1, int(sum(getattr(b, "amount", 0) for b in items) // FOOD_PER_VILLAGER))
             if any(math.hypot(g0.x - cx, g0.y - cy) < 8 for g0 in grans) or (not self.any_of(gs.GRANARY)):
-                cap += min(6, len(items))
+                cap += min(6, len(items), fcap)
             elif tc and math.hypot(cx - tc.x, cy - tc.y) <= self.berry_range():
-                cap += min(6, len(items))                # waits at the patch until its granary is built
+                cap += min(6, len(items), fcap)          # waits at the patch until its granary is built
         return cap
 
     def allocate(self, v, counts):
         wood_n = counts.get("wood", 0)
         gold_want = (2 + GOLD_PER_STABLE * max(1, len(self.complete(gs.STABLE)))) if self.age >= 3 else 6
-        if (self.bronze_clicked or self.rules_broken) and counts.get("gold", 0) < gold_want and self.known_gold():
+        if self.bronze_clicked and counts.get("gold", 0) < gold_want and self.known_gold():
             return "gold"
         leads = sum(1 for (k, x, y, st) in self.sites if st in ("provoke", "run", "push"))
         if leads and len(self.s.villagers) >= 7 and counts.get("hunt", 0) < leads:
@@ -1810,7 +2086,8 @@ class Brain:
     # ---------------------------------------------------------------- per-role work
     def work(self, v, role, force=False):
         if role == "scout":
-            return self.scout(v)
+            # while aging: the unexplored ground nearest home first, then further out (the user)
+            return self.scout(v, near_home=not self.bronze_clicked)
         if role == "search":
             return self.search(v)
         if role == "hunt":
@@ -1822,6 +2099,10 @@ class Brain:
         if role == "berry":
             t = self.nearest_berry(v)
             if t:
+                if self.idle_reorder(v, t):
+                    t = self.nearest_berry(v)
+                    if not t:
+                        return self.work_wood(v)
                 return self.order([v], t)
             w = self.berry_wait_spot()
             if w:                                   # a patch without its granary yet: wait there for the wood
@@ -1833,14 +2114,150 @@ class Brain:
             return self.work_wood(v)
         if role == "gold":
             mines = self.known_gold()
+            mines = [m for m in mines if not self.bad_target(m)]
             if mines:
                 anchor = self.pit_near(gs.GOLD_MINE) or (v.x, v.y)
                 t = min(mines, key=lambda o: o.dist(*anchor))
+                self.idle_reorder(v, t)
                 return self.order([v], t)
             return self.work_wood(v)
         if role == "farm":
             return self.work_farm(v)
         return self.work_wood(v)
+
+    def waiting_hunter(self, v):
+        """A hunter whose site is a lure on its way home or a herd being pushed: standing still with
+        nothing in hand is its job (it waits for the elephant / the herd at the home)."""
+        key = self.hunt_site.get(v.id)
+        if not key:
+            return False
+        st = next((st for (k, _x, _y, st) in self.sites if k == key), None)
+        return st in ("provoke", "run", "push", "pushed")
+
+    def check_gatherers(self):
+        """The user: every villager checked, often. A gatherer (berries, meat, farm, wood, gold) whose
+        carried amount has not changed for 45 s is not working, busy or not (age4: 9-13 'meat eaters'
+        for 120 s and the food did not move by one): its target is skipped for 120 s, its job dropped
+        (60 s ban) so the allocator gives it another one, and the line says where it stood."""
+        t = self.now()
+        if t - getattr(self, "_gath_t", -99) < 5:
+            return
+        self._gath_t = t
+        track = self.__dict__.setdefault("_gath", {})
+        owned = self.task_owned()
+        seen = set()
+        stuck = []
+        for v in self.s.villagers:
+            r = self.role.get(v.id)
+            name = self.role_name(v.id)
+            if name not in ("berry", "berry2", "hunt", "farm", "wood", "gold") or isinstance(r, tuple)                     or v.id in owned or v.id in self.defenders or v.id in self.helpers or v.id in self.repairers                     or (name == "hunt" and self.waiting_hunter(v)):
+                track.pop(v.id, None)
+                continue
+            seen.add(v.id)
+            amt = round(v.amount, 2)
+            rec = track.get(v.id)
+            # (walking to a far patch is work too - age5: 108 'stuck' reports, most of them villagers on
+            #  their way: only one standing within 3 tiles of where the count started is stuck)
+            if rec is None or rec[0] != amt or rec[2] != name or math.hypot(v.x - rec[3], v.y - rec[4]) > 3:
+                track[v.id] = (amt, t, name, v.x, v.y)
+                continue
+            if t - rec[1] >= 45:
+                stuck.append((v, t - rec[1]))
+                track[v.id] = (amt, t, name, v.x, v.y)
+        for vid in [k for k in track if k not in seen]:
+            del track[vid]
+        for v, dt in stuck[:4]:
+            act = self.r.action(v)
+            tgt = None
+            if act and act[1]:
+                tgt = next((o for o in self.s.gaia if o.ptr == act[1]), None) or                       next((o for o in self.s.mine if o.ptr == act[1]), None)
+            if tgt is not None and tgt.type != gs.FARM:
+                self.__dict__.setdefault("_bad_targets", {})[tgt.ptr] = t + 120
+            name = self.role_name(v.id)
+            self.say("WORKDBG villager #%d (%s) at (%.0f,%.0f) carrying %.1f for %.0f s, action %s on %s: job dropped"
+                     % (v.id, name, v.x, v.y, v.amount, dt, act[0] if act else None,
+                        ("%s at (%.0f,%.0f)" % (tgt.name, tgt.x, tgt.y)) if tgt is not None else "-"))
+            key = self.hunt_site.pop(v.id, None)
+            self.role.pop(v.id, None)
+            self.__dict__.setdefault("role_ban", {})[v.id] = (name, t + 60)
+            if key is not None:
+                # two stuck hunters of one site within a minute: the site itself goes for 120 s
+                sb = self.__dict__.setdefault("_site_stuck", {})
+                hits = [x for x in sb.get(key, []) if t - x < 60] + [t]
+                sb[key] = hits
+                if len(hits) >= 2:
+                    self.__dict__.setdefault("_site_ban", {})[key] = t + 120
+                    self.say("WORKDBG hunt site %s: %d stuck hunters - left alone for 120 s" % (key, len(hits)))
+
+    def free_trapped(self):
+        """A villager idle 60+ s on one spot whose walkable area is tiny is shut in (the user: villagers
+        locked inside the wall never deleted a house to get out; age1: one stood 500 s at (82,34) through
+        four roles). Our nearest house next to its pocket is deleted - the wall puts it back later."""
+        t = self.now()
+        if t - getattr(self, "_trap_t", -99) < 20:
+            return
+        self._trap_t = t
+        isince = self.__dict__.get("_idle_since", {})
+        pm = self.pm
+        W = pm.W
+        for v in self.s.villagers:
+            rec = isince.get(v.id)
+            if not rec or t - rec[0] < 60 or v.id in self.task_owned():
+                continue
+            x, y = int(v.x), int(v.y)
+            start = [(xx, yy) for xx in range(x - 1, x + 2) for yy in range(y - 1, y + 2) if pm.passable(xx, yy)]
+            if not start:
+                continue
+            dist = pm.bfs(start, max_cost=10 * 40)
+            reach = [(i % W, i // W) for i, d in enumerate(dist) if d >= 0]
+            if len(reach) >= 150:
+                continue                                 # free to walk: idle for another reason
+            houses = [h for h in self.s.mine if h.type == gs.HOUSE and h.hp > 0]
+            if not houses:
+                continue
+
+            def gap(h):
+                return min(abs(h.x - rx) + abs(h.y - ry) for rx, ry in reach)
+            h = min(houses, key=gap)
+            if gap(h) > 3.5:
+                continue
+            try:
+                self.g.delete(h)
+            except Exception as e:  # noqa: BLE001
+                self.say("trapped: delete failed: %r" % (e,))
+                return
+            isince.pop(v.id, None)
+            self.say("TRAPPED villager #%d (%s) at (%.0f,%.0f) idle %.0f s in a %d-tile pocket: house #%d at (%.0f,%.0f) deleted"
+                     % (v.id, self.role_name(v.id), v.x, v.y, t - rec[0], len(reach), h.id, h.x, h.y))
+            return                                       # one at a time
+
+    def bad_target(self, o):
+        return self.now() < self.__dict__.get("_bad_targets", {}).get(o.ptr, -1)
+
+    def idle_reorder(self, v, tgt):
+        """A villager ordered to the same target again and again while it stays idle cannot reach it
+        (fix1v2b: 6 berry pickers stood by their granary for 1 100 s, ordered to bushes they could not
+        get to, the patch never shrank): after 4 idle orders in 15+ s the target is skipped for 180 s.
+        Returns True when the target was just given up."""
+        t = self.now()
+        io = self.__dict__.setdefault("_idle_orders", {})
+        rec = io.get(v.id)
+        if rec is None or rec[0] != tgt.ptr or t - rec[2] > 60:
+            io[v.id] = (tgt.ptr, 1, t, v.x, v.y)
+            return False
+        moved = math.hypot(v.x - rec[3], v.y - rec[4]) > 2.0
+        if moved:
+            io[v.id] = (tgt.ptr, 1, t, v.x, v.y)
+            return False
+        n = rec[1] + 1
+        io[v.id] = (tgt.ptr, n, rec[2], rec[3], rec[4])
+        if n >= 4 and t - rec[2] >= 15:
+            self.__dict__.setdefault("_bad_targets", {})[tgt.ptr] = t + 180
+            del io[v.id]
+            self.say("IDLEDBG villager #%d (%s) at (%.0f,%.0f) idle after %d orders to %s at (%.0f,%.0f) in %.0f s: "
+                     "target skipped for 180 s" % (v.id, self.role_name(v.id), v.x, v.y, n, tgt.name, tgt.x, tgt.y, t - rec[2]))
+            return True
+        return False
 
     def search(self, v):
         """Find the first berries: each early villager heads for the nearest unexplored ground in its
@@ -1902,6 +2319,10 @@ class Brain:
         def load(b):
             n = self.on_target.get(b.ptr, 0)
             return n - 1 if b.ptr == mine else n
+
+        bushes = [b for b in bushes if not self.bad_target(b)]
+        if not bushes:
+            return None
 
         def cost(b):
             # the walk bush -> food dropsite (tiles, real path) first; a shared bush costs SHARE_TILES
@@ -2008,14 +2429,27 @@ class Brain:
             return                                   # already alone on its farm
         free = [f for f in farms if f.ptr not in taken and f.amount > 0]
         if free:
-            return self.order([v], min(free, key=lambda f: f.dist(v.x, v.y)))
+            f = min(free, key=lambda f: f.dist(v.x, v.y))
+            # (the count is read once a tick: the farm is marked taken at once, or the next farmer of the
+            #  same tick picks it too - age5: two farmers on one farm, both standing 49 s with nothing)
+            if mine:
+                occ[mine] = max(0, occ.get(mine, 0) - 1)
+            occ[f.ptr] = occ.get(f.ptr, 0) + 1
+            return self.order([v], f)
         farmers = sum(1 for o in self.s.villagers if self.role_name(o.id) == "farm")
         if farmers <= len(farms) + len(self.pending_of(gs.FARM)):
             return self.work_wood(v)                 # every farm has its farmer already
         max_pending = 6 if self.res(gs.WOOD) < 400 else 12
         if getattr(self, "wall_fixed_R", None) is not None and not self.wall_sealed and self.res(gs.WOOD) < 250:
             max_pending = 2                          # the wall's houses first (the user: sealed before anything)
-        if self.complete(gs.MARKET) and self.can_afford(wood=75) and len(self.pending_of(gs.FARM)) < max_pending:
+        # the Bronze buildings come first: their wood is kept back from the farms (age3: the stable's
+        # placement failed once, the farms took every 75 wood after it, the stable never came - 1 000
+        # food banked and no Bronze click for 7 minutes)
+        reserve = 0
+        if self.age == 2 and not self.bronze_clicked:
+            reserve += 0 if self.any_of(gs.MARKET) else 150
+            reserve += 0 if self.any_of(self.second_building()) else 150
+        if self.complete(gs.MARKET) and self.can_afford(wood=75 + reserve) and len(self.pending_of(gs.FARM)) < max_pending:
             spot = self.farm_spot(v)
             if spot:
                 self.start_build(gs.FARM, spot, [v], "(farm)")
@@ -2180,6 +2614,8 @@ class Brain:
                 elif a.hp <= 0:
                     out.pop(a.id, None)
         rng = LURE_RANGE if not self.food_desperate else 70
+        if not self.bronze_clicked:
+            rng = LURE_RANGE                             # (lured home up to 60 tiles; further: killed in place)
         t = self.now()
         # a lion within 8 tiles of the elephant kills the lurer on its way (lure7/8: 4 lurers) - that
         # elephant waits until the lion has wandered off
@@ -2235,7 +2671,8 @@ class Brain:
             far = []
             for aid, (x, y, ty, _) in self.animal_pos.items():
                 d = math.hypot(x - tc.x, y - tc.y)
-                if ty == gs.ELEPHANT and aid not in self.lures and aid not in self.lure_failed and LURE_RANGE < d <= FAR_ELEPHANT:
+                far_max = 999 if not self.bronze_clicked else FAR_ELEPHANT   # (the user: the whole map while aging)
+                if ty == gs.ELEPHANT and aid not in self.lures and aid not in self.lure_failed and LURE_RANGE < d <= far_max:
                     tr = self.wslow.track(aid)
                     if tr is not None:
                         far.append((d, aid, tr.x, tr.y))
@@ -2288,6 +2725,18 @@ class Brain:
             elif h.state == "pushed":
                 pass                                     # (kill phase of the HerdPush task)
             if h.state in ("kill", "eat"):
+                # every hunter of the site idle 45+ s on one spot: the herd cannot be got at (age2: 7-9
+                # hunters stood 300 s by the pit of a herd 43 tiles out, food stuck at 174) - left alone
+                # for 120 s, the hunters go to other food
+                isince = self.__dict__.get("_idle_since", {})
+                hs_ = [v for v in self.s.villagers if self.hunt_site.get(v.id) == ("herd", h.key)]
+                if hs_ and all(v.id in isince and t - isince[v.id][0] >= 45 for v in hs_):
+                    h.state, h.skip_until = "skip", t + 120
+                    for v in hs_:
+                        self.hunt_site.pop(v.id, None)
+                        isince.pop(v.id, None)
+                    self.say("HERDSKIP herd %s: its %d hunters idle 45+ s - left alone for 120 s" % (h.key, len(hs_)))
+                    continue
                 if not h.pit_done and (h.state == "eat" or any(self.hunt_site.get(v.id) == ("herd", h.key)
                                                                for v in self.s.villagers)):
                     self.herd_pit(h)                 # retried until the wood-line pit exists
@@ -2311,8 +2760,8 @@ class Brain:
                 pts = [(a.x, a.y) for a in (self.herd_live(h) or self.herd_carcasses(h))]
                 if not pts and h.state == "kill":         # out of sight now: where we saw its gazelles
                     pts = self.herd_remembered(h)
-                rng = HERD_RANGE                         # berries feed 6 at most: the others hunt
-                if (not sites and not self.sites) or self.food_emergency:
+                rng = HERD_RANGE if self.bronze_clicked else 999   # (the user: no radius while aging - nearest first)
+                if ((not sites and not self.sites) or self.food_emergency) and self.bronze_clicked:
                     rng = HERD_POOR if not self.food_desperate else 999   # a map without hunts close by
                 if pts and min(math.hypot(x - tc.x, y - tc.y) for x, y in pts) <= rng:
                     sites.append((("herd", h.key), sum(x for x, _ in pts) / len(pts),
@@ -2325,7 +2774,7 @@ class Brain:
                 continue
             if any(math.hypot(m.x - x, m.y - y) < 8 for x, y in covered) or                     any(math.hypot(m.x - x, m.y - y) < 4 for x, y in lure_spots):
                 continue
-            if math.hypot(m.x - tc.x, m.y - tc.y) > (HERD_RANGE if not self.food_desperate else 999):
+            if math.hypot(m.x - tc.x, m.y - tc.y) > (HERD_RANGE if (self.bronze_clicked and not self.food_desperate) else 999):
                 continue
             for g in groups:
                 if math.hypot(g[0] - m.x, g[1] - m.y) < 5:
@@ -2338,6 +2787,9 @@ class Brain:
             self.meat_groups[key] = ms
             sites.append((key, gx, gy, "eat"))
         sites.sort(key=lambda s: (0 if s[0][0] == "lure" else 1, math.hypot(s[1] - tc.x, s[2] - tc.y)))
+        ban = self.__dict__.get("_site_ban", {})
+        if ban:
+            sites = [st for st in sites if ban.get(st[0], -1) <= t]
         self.sites = sites[:MAX_HUNT_SITES]
         for key, x, y, state in self.sites:
             if state == "push":
@@ -2364,6 +2816,19 @@ class Brain:
                 cap = min(HUNT_SITE_MAX, max(HUNT_SITE_MIN, near))
             if self.age == 1 and self.res(gs.WOOD) >= 300 and state in ("eat", "kill"):
                 cap += 3                                 # wood piles up in Stone: the spare hands eat, not chop
+            if state in ("eat", "kill"):
+                # the user: under 70 food left per villager a site has too many - the extra ones go and
+                # eat elsewhere (the allocator gives the places above the cap to other sites)
+                food = self.site_food_left(key)
+                if food is not None:
+                    fcap = max(1, int(food // FOOD_PER_VILLAGER))
+                    if fcap < cap:
+                        load = sum(1 for k in self.hunt_site.values() if k == key)
+                        if load > fcap and t - self.__dict__.setdefault("_trim_say", {}).get(key, -99) > 30:
+                            self._trim_say[key] = t
+                            self.say("TRIM site %s: %.0f food left for %d villagers -> %d stay, the others eat elsewhere"
+                                     % (key, food, load, fcap))
+                        cap = fcap
             self.site_cap[key] = cap
             self.hunt_capacity += cap
         for vid in [k for k, key in self.hunt_site.items()
@@ -3563,7 +4028,7 @@ class Brain:
             if self.start_build(gs.STORAGE_PIT, spot, builders, "(wood line)"):
                 self.woodline_placed = True
             return
-        if self.bronze_clicked or self.rules_broken:
+        if self.bronze_clicked:
             gold = self.known_gold()
             if gold and len(pits) < 5:
                 g0 = min(gold, key=lambda o: o.dist(tc.x, tc.y))
@@ -3659,7 +4124,9 @@ class Brain:
         spot = self.next_wall_slot(btype)
         if spot:
             return spot, "(wall)"
-        if btype in MILITARY_BUILDINGS and outside_ok:
+        if btype in MILITARY_BUILDINGS and outside_ok and not first_age_building:
+            # (the age's own building stays in the town when no wall slot is free - age3: the stable
+            #  went outside, failed, and the age waited for it)
             spot = self.outside_spot(btype)
             if spot:
                 return spot, "(outside the wall)"
@@ -3722,6 +4189,13 @@ class Brain:
                 cands.append((abs(d - (R + 4)) - 3.0 * toward + self._near_resources_penalty(cx, cy), x0, y0))
         return self.place_checked(btype, cands)
 
+    def horse_army(self):
+        """The army is horse units (chariot archers, cavalry, camels): Nobility pays."""
+        if getattr(self, "archer_plan", False):
+            return getattr(self, "archer_kind", "chariot") == "chariot"
+        A = self.tactics or {}
+        return not A.get("want_academy")
+
     def second_building(self):
         """The Tool-age building next to the market that opens the Bronze age: the archery range in the
         'cung R' plan (the user's chariot-archer games: no stable at all), else the stable."""
@@ -3734,7 +4208,11 @@ class Brain:
         if getattr(self, "archer_plan", None) is not None or self.age < 2 and not self.tool_clicked:
             return
         civ = tactics.civ_name(self.my_civ)
-        if civ in ("Egyptian", "Assyrian", "Hittite"):
+        self.archer_kind = "chariot"
+        if civ == "Minoan":
+            plan = True                          # (the user: Minoan plays "cung A" - improved bowmen)
+            self.archer_kind = "improved"
+        elif civ in ("Egyptian", "Assyrian", "Hittite"):
             plan = True
         elif civ in tactics.CAMEL_CIVS or civ in ("Greek", "Macedonian"):
             plan = False
@@ -3742,7 +4220,9 @@ class Brain:
             import random
             plan = random.Random(self.me * 7919 + int(self.start_time or 0)).random() < 0.35
         self.archer_plan = plan
-        if plan:
+        if plan and self.archer_kind == "improved":
+            self.say("army plan: improved bowmen (range instead of stable, Improved Bow + Leather Armor Archers at Bronze) - %s" % civ)
+        elif plan:
             self.say("army plan: chariot archers (range instead of stable, Leather Armor Archers + Wheel at Bronze) - %s" % civ)
 
     def buildings_program(self):
@@ -3769,13 +4249,18 @@ class Brain:
                 wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop) "))
             if A.get("want_iron") and not self.any_of(gs.TEMPLE):
                 wants.append((gs.TEMPLE, 200, "(temple: second Bronze building for Iron) "))
+        if self.age >= 3 and self.horse_army():
+            # the user: the first upgrade of the Government Center, Nobility (+15 % hp), for chariot
+            # archers, cavalry and camels - the building comes once there are 3 soldiers
+            if len(self.military()) >= 3:
+                wants.insert(0, (gs.GOVERNMENT_CENTER, 175, "(government centre: Nobility) "))
         for btype, cost, why0 in wants:
             if not self.any_of(btype) and not self.pending_of(btype) and self.can_afford(wood=cost + 75):
                 spot, why = self.building_spot(btype)
                 if spot:
                     self.start_build(btype, spot, self.builders_near(2, *spot), why0 + why)
                     return
-        if self.rules_broken and not self.any_of(gs.BARRACKS) and not self.pending_of(gs.BARRACKS) \
+        if False and self.rules_broken and not self.any_of(gs.BARRACKS) and not self.pending_of(gs.BARRACKS) \
                 and self.can_afford(wood=125):
             spot, why = self.building_spot(gs.BARRACKS)
             if spot:
@@ -3788,13 +4273,13 @@ class Brain:
         if mil and not self.scout_trained:
             self.scout_trained = True
         # one scout right after clicking Bronze (the only unit allowed before Bronze is reached)
-        if (self.bronze_clicked or self.rules_broken) and not self.scout_trained and st and self.can_afford(food=100):
+        if self.bronze_clicked and not self.scout_trained and st and self.can_afford(food=100):
             if not self.r.producing(st[0]):
                 self.g.train(st[0], gs.SCOUT)
                 self.scout_trained = True
                 self.say("scout cavalry ordered to find enemy houses and villagers")
         pass
-        may_fight = self.age >= 3 or self.rules_broken
+        may_fight = self.age >= 3                 # (the user: no Stone / Tool age army, even when attacked)
         if not may_fight or self.res(gs.HEADROOM) < 1:
             return
         for i, b in enumerate(st):
@@ -3812,7 +4297,7 @@ class Brain:
                     self._gold_out_say = self.now()
                     self.say("no gold left on the map: the stables make %s, archers come in" % A["pick"])
         for b in self.complete(gs.BARRACKS):
-            if self.rules_broken and not self.r.producing(b) and self.can_afford(food=50):
+            if False:
                 self.g.train(b, gs.CLUBMAN)
         A = self.tactics
         if A and A.get("want_academy"):
@@ -3822,7 +4307,7 @@ class Brain:
                     if self.now() - getattr(self, "_acad_say", 0) > 60:
                         self._acad_say = self.now()
                         self.say("academy trains hoplites (%s)" % tactics.civ_name(self.my_civ))
-        if getattr(self, "archer_plan", False) and (self.bronze_clicked or self.rules_broken) and not self.scout_trained:
+        if getattr(self, "archer_plan", False) and self.bronze_clicked and not self.scout_trained:
             rg = [b for b in self.complete(gs.ARCHERY_RANGE) if not self.r.producing(b)]
             if rg and self.can_afford(food=40, wood=20):
                 self.g.train(rg[0], gs.BOWMAN)
@@ -3832,14 +4317,15 @@ class Brain:
             # "cung R" once the Wheel is in (70 food 40 wood), else "cung A" after Improved Bow (40 / 20),
             # else the basic bowman; the villagers' 50 food stays untouched
             ranged = A.get("ranged", "bowman")
-            utype, food, wood = {"chariot_archer": (gs.CHARIOT_ARCHER, 40, 70),
-                                 "improved_bowman": (gs.IMPROVED_BOWMAN, 40, 20)}.get(ranged, (gs.BOWMAN, 40, 20))
+            utype, cost = {"chariot_archer": (gs.CHARIOT_ARCHER, dict(food=40, wood=70)),
+                           "improved_bowman": (gs.IMPROVED_BOWMAN, dict(food=40, gold=20))}.get(
+                               ranged, (gs.BOWMAN, dict(food=40, wood=20)))
             archers_now = [u for u in mil if tactics.unit_class(u.name) in ("archer", "chariot")]
             for b in self.complete(gs.ARCHERY_RANGE):
                 if getattr(self, "archer_plan", False) and ranged == "bowman" and \
                         (len(archers_now) >= 1 or any(self.r.producing(b2) for b2 in self.complete(gs.ARCHERY_RANGE))):
                     break                                # (the user: one bowman to defend until the Wheel)
-                if not self.r.producing(b) and self.can_afford_unit(food=food, wood=wood):
+                if not self.r.producing(b) and self.can_afford_unit(**cost):
                     self.g.train(b, utype)
                     if self.now() - getattr(self, "_rng_say", 0) > 60:
                         self._rng_say = self.now()
@@ -3985,7 +4471,7 @@ class Brain:
         raids), tries the known research building, else every building type in turn, and checks next
         tick that the research really started."""
         t = self.now()
-        if not (self.bronze_clicked or self.rules_broken) or t - getattr(self, "_rp_t", -99) < 4:
+        if not self.bronze_clicked or t - getattr(self, "_rp_t", -99) < 4:
             return
         self._rp_t = t
         try:
@@ -4022,7 +4508,24 @@ class Brain:
         avail = [tid for tid in avail if tid in K.TECHS]    # (states 1 of pseudo-techs: buildings, civ bonuses)
         prio = K.TECH_PRIORITY
         if getattr(self, "archer_plan", False):
-            prio = [28, 41, 56, 44] + [x for x in K.TECH_PRIORITY if x not in (28, 41, 56, 44)]
+            first = [56, 41, 44] if getattr(self, "archer_kind", "chariot") == "improved" else [28, 41, 34, 56, 44]
+            prio = first + [x for x in K.TECH_PRIORITY if x not in first]
+        elif self.horse_army():
+            prio = K.TECH_PRIORITY[:2] + [34] + [x for x in K.TECH_PRIORITY[2:] if x != 34]   # Nobility early
+        # the army's own upgrades only (the user: wood 2, attack 4 for the melee army, armour 4 for the
+        # horses): an archer army never buys melee attack / horse or infantry armour, a horse army never
+        # the archers' armour or bows, the hoplites neither of them
+        MELEE_ATT, HORSE_ARM, INF_ARM, ARCH = {46, 51}, {42, 45}, {40, 43, 47}, {41, 44, 56, 57}
+        if getattr(self, "archer_plan", False):
+            useless = MELEE_ATT | HORSE_ARM | INF_ARM
+        elif (self.tactics or {}).get("want_academy"):
+            useless = HORSE_ARM | ARCH
+        else:
+            useless = INF_ARM | ARCH
+        if (self.tactics or {}).get("want_archery") and not getattr(self, "archer_plan", False):
+            useless -= ARCH                               # (archers against their infantry: their armour too)
+        prio = [x for x in prio if x not in useless]
+        avail = [x for x in avail if x not in useless]
         order = [tid for tid in prio if tid in avail] + [tid for tid in avail if tid not in prio]
         army_full = len(self.military()) >= 12
         # the food / gold set aside for the first tech in the order whose building is free: the stables and
@@ -4092,7 +4595,7 @@ class Brain:
     def econ_upgrades(self):
         """Market techs the recorded players buy: Wood Working once Bronze is clicked (16/36 players,
         right when Bronze arrives), The Wheel in Bronze (23/36, ~16 min)."""
-        if not (self.bronze_clicked or self.rules_broken):
+        if not self.bronze_clicked:
             return
         mk = [m for m in self.complete(gs.MARKET) if not self.r.producing(m)]
         if not mk:
@@ -4517,6 +5020,10 @@ class Brain:
         tc0 = self.tc()
         raiders = [e for e in enemy_mil if not (e.type == gs.SCOUT and not any(o.id != e.id and o.dist(e.x, e.y) < 10
                                                                                  for o in enemy_mil))]
+        if not self.bronze_clicked:
+            # before the Bronze click only Bronze units clear the work areas (the early ones are fought
+            # by the villagers next to whoever they hit)
+            raiders = [e for e in raiders if bronze_unit(e)]
         if raiders and tc0:
             for v in s.villagers:
                 if t < self.retreat_until.get(v.id, 0) or v.id in self.defenders:
@@ -4544,44 +5051,65 @@ class Brain:
             victim = mine[act[1]]
             self.attackers.append(e)
             lone_scout = e.type == gs.SCOUT and not any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil)
-            if victim.cls == gs.CLS_VILLAGER and not lone_scout and self.tc():
+            # before the Bronze click an early unit (scout, clubman, axeman, slinger, bowman) is fought by
+            # the villagers next to the one it hits; a Bronze unit always makes them run (the user)
+            early_fight = victim.cls == gs.CLS_VILLAGER and not self.bronze_clicked and not bronze_unit(e)
+            if victim.cls == gs.CLS_VILLAGER and not lone_scout and not early_fight and self.tc():
                 # the user: keep the villagers. One hit by a soldier runs for the TC (our army is sent to
                 # whoever attacks our villagers, see army()); a lone scout is beaten by villagers instead
                 tc = self.tc()
                 if t >= self.retreat_until.get(victim.id, 0):
-                    ux, uy = unit(tc.x - victim.x, tc.y - victim.y)
-                    if victim.dist(tc.x, tc.y) < 4:
+                    # the user: the villager hit runs AWAY from the TC, leading the soldier off the town;
+                    # if that way goes through the soldier, it turns aside (away from the soldier)
+                    ux, uy = unit(victim.x - tc.x, victim.y - tc.y)
+                    if victim.dist(tc.x, tc.y) < 1:
                         ux, uy = unit(victim.x - e.x, victim.y - e.y)
-                    self.move([victim], victim.x + ux * 7, victim.y + uy * 7)
+                    ax, ay = unit(e.x - victim.x, e.y - victim.y)
+                    if ux * ax + uy * ay > 0.3:
+                        px, py = -uy, ux
+                        if px * ax + py * ay > 0:
+                            px, py = -px, -py
+                        ux, uy = unit(ux + 2 * px, uy + 2 * py)
+                    W, H = self.r.W, self.r.H
+                    gx = min(W - 2.0, max(1.0, victim.x + ux * 8))
+                    gy = min(H - 2.0, max(1.0, victim.y + uy * 8))
+                    self.move([victim], gx, gy)
                     self.retreat_until[victim.id] = t + 6
                     self.mark([victim], ("flee",))
                     if t - getattr(self, "_flee_say", 0) > 10:
                         self._flee_say = t
-                        self.say("villager #%d attacked by %s #%d: runs for the TC" % (victim.id, e.name, e.id))
+                        self.say("villager #%d attacked by %s #%d: runs away from the TC (leads it off the town)"
+                                 % (victim.id, e.name, e.id))
             lone = e.type == gs.SCOUT and not any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil)
-            if lone and e.id not in self.scout_hunts:
+            if (lone or early_fight) and e.id not in self.scout_hunts:
                 self.scout_hunts[e.id] = (victim.x, victim.y, t)
-                self.say("lone enemy scout #%d attacks our %s: villagers within %d tiles fight back" % (
-                    e.id, victim.name, SCOUT_CALL_R))
+                self.say("enemy %s #%d attacks our %s before the Bronze click: villagers within %d tiles fight back, "
+                         "the others keep working" % (e.name, e.id, victim.name, SCOUT_CALL_R))
         for sid, (ax, ay, t0) in list(self.scout_hunts.items()):
             e = by_id.get(sid)
             if e is None or e.dist(ax, ay) > SCOUT_CHASE_R:
                 self.drop_scout_hunt(sid, "gone" if e is None else "ran %.1f tiles away" % e.dist(ax, ay))
                 continue
-            for v in s.villagers:
-                if v.id in self.defenders or v.dist(ax, ay) <= SCOUT_CALL_R:
-                    self.defenders[v.id] = sid
-                    if not self.recent(v.id, ("o", e.id), within=2.5):
-                        self.order([v], e)
+            if bronze_unit(e):
+                self.drop_scout_hunt(sid, "is a Bronze unit: villagers run")
+                continue
+            owned = self.task_owned()
+            near = sorted((v for v in s.villagers if v.id not in owned and
+                           (v.id in self.defenders or v.dist(ax, ay) <= SCOUT_CALL_R)), key=lambda v: v.dist(ax, ay))
+            for v in near[:EARLY_DEFENDERS]:              # (a cluster, never the whole town)
+                self.defenders[v.id] = sid
+                if not self.recent(v.id, ("o", e.id), within=2.5):
+                    self.order([v], e)
         if not self.rules_broken:
             return
-        for e in [e for e in s.enemy if e.kind == gs.KIND_COMBAT and e.hp > 0]:
-            if e.id in self.scout_hunts:
+        # enemy VILLAGERS that came to fight (rules broken): the villagers next to them answer, a few only
+        for e in [e for e in s.enemy if e.cls == gs.CLS_VILLAGER and e.hp > 0]:
+            act = self.r.action(e)
+            if not act or act[1] not in mine:
                 continue
             near = [v for v in s.villagers if v.dist(e.x, e.y) < 5 and not self.recent(v.id, ("o", e.id), within=4)]
-            weak = e.cls == gs.CLS_VILLAGER or e.type in (gs.SCOUT, gs.CLUBMAN)
-            if near and (weak or len(near) >= 4):
-                self.order(near[:6], e)
+            if near:
+                self.order(near[:3], e)
 
     def drop_scout_hunt(self, sid, why):
         del self.scout_hunts[sid]

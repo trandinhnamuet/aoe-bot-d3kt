@@ -28,6 +28,7 @@ STORAGE_PIT = 103
 BARRACKS = 12
 MARKET = 84
 STABLE = 101
+GOVERNMENT_CENTER = 82    # "nhà BC": Nobility (+15 % hp for horse units)
 TEMPLE = 104
 SIEGE_WORKSHOP = 49
 ARCHERY_RANGE = 87
@@ -45,7 +46,7 @@ AXEMAN = 74
 ACADEMY = 0              # "BY" (empires.dat: Academy = 0; Phalanx research location 0)
 HOPLITE = 93             # Soldier-Phal1 (94 Phalanx, 291 Centurion): 60 food 40 gold
 BOWMAN = 4
-IMPROVED_BOWMAN = 5      # "cung A" (needs Improved Bow 56): 40 food 20 wood
+IMPROVED_BOWMAN = 5      # "cung A" (needs Improved Bow 56): 40 food 20 gold
 COMPOSITE_BOWMAN = 6     # "cung C" (Iron, Composite Bow 57)
 CHARIOT_ARCHER = 41      # "cung R" = "Soldier-Chariot2", archery range, needs the Wheel (28). (It was 40 - the
                          # stable chariot - so every chariot archer order was refused: recordings 13/10)

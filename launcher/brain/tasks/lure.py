@@ -16,6 +16,9 @@ kill     inside KILL_NEAR of the TC the waiters attack from throwing range; the 
 import math
 import os
 
+LION_KEEP = 7.0          # a lion closer than this to the lurer's way: go round it (the user)
+LION_ABORT = 2.5         # ... closer than this to the lurer itself, or chasing it: the lure is given up
+
 from brain import geom
 from brain.iface import Task
 
@@ -282,6 +285,45 @@ class Lure(Task):
                     o.move([i], wx, wy)
                     self.mark(w, ("mv", i))
 
+    def _lion_detour(self, w, o, v, gx, gy):
+        """A known lion within LION_KEEP tiles of the way from the lurer to (gx, gy), ahead of it: walk to a
+        point beside the lion, LION_KEEP + 1 tiles out, on the lurer's side (the user: go round a lion
+        instead of giving the lure up). True when a detour move was given (held 1.5 s)."""
+        if self.recent(w, ("detour", v.id), 1.5):
+            return bool(getattr(self, "_detouring", False))
+        self.mark(w, ("detour", v.id))
+        self._detouring = False
+        L = math.hypot(gx - v.x, gy - v.y)
+        if L < 3.0:
+            return False
+        ux, uy = (gx - v.x) / L, (gy - v.y) / L
+        best = None
+        for a in w.animals():
+            if a.kind != "lion" or a.hp <= 0:
+                continue
+            ax, ay = a.x - v.x, a.y - v.y
+            along = ax * ux + ay * uy
+            if along < 0 or along > L + 2:
+                continue                                   # behind us / past the goal
+            side = ax * (-uy) + ay * ux
+            if abs(side) < LION_KEEP and (best is None or along < best[0]):
+                best = (along, side, a)
+        if best is None:
+            return False
+        along, side, a = best
+        sgn = -1.0 if side > 0 else 1.0                    # pass on the side away from the lion
+        px, py = -uy * sgn, ux * sgn
+        wx = a.x + px * (LION_KEEP + 1.0) + ux * 2.0
+        wy = a.y + py * (LION_KEEP + 1.0) + uy * 2.0
+        o.move([v.id], wx, wy)
+        self.mark(w, ("mv", v.id))
+        self._detouring = True
+        if not self.recent(w, ("detour_say", v.id), 10.0):
+            self.mark(w, ("detour_say", v.id))
+            self.say(w, "lurer #%d goes round lion #%d (%.1f tiles off the way): waypoint (%.0f,%.0f)" % (
+                v.id, a.id, abs(side), wx, wy))
+        return True
+
     def _run_step(self, w, o, v, e, d, tgt, stopped, solo):
         """Flee while chased, stop once it gave up, one more spear when it stands 3-8 tiles away.
         solo: the kill round the home with nobody waiting (the user: one spear, move on, round the
@@ -374,13 +416,16 @@ class Lure(Task):
                     v.id, v.x, v.y, v.hp, e.x, e.y, e.hp, d, w.action_of(v.id), tgt))
             if not self.recent(w, ("lion", v.id), 1.0):
                 self.mark(w, ("lion", v.id))
-                lion = next((a for a in w.animals() if a.kind == "lion" and a.hp > 0 and v.dist(a.x, a.y) <= 5.0), None)
+                lion = next((a for a in w.animals() if a.kind == "lion" and a.hp > 0 and
+                             (v.dist(a.x, a.y) <= LION_ABORT or w.target_of(a.id) == v.id)), None)
                 if lion is not None:
-                    # a lion on the way kills the lurer (lure13: #4717 at 0.4 tiles): home, try later
+                    # a lion on the lurer itself kills it (lure13: #4717 at 0.4 tiles): home, try later
                     hx, hy = self._home(w)
                     o.move([v.id], hx + 2.5, hy + 2.5)
                     self.fail(w, "lion #%d %.1f tiles from the lurer on the way" % (lion.id, v.dist(lion.x, lion.y)))
                     return
+            if self._lion_detour(w, o, v, e.x, e.y):
+                return                                     # (the user: round the lion, not home)
             if self.hp0 is None:
                 self.hp0, self.vhp0 = e.hp, v.hp
                 if v.hp < HURT_HP:
@@ -411,6 +456,8 @@ class Lure(Task):
         if self.state == "solo":
             self._run_step(w, o, v, e, d, tgt, stopped, solo=True)
             return
+        if self.state == "run" and (tgt != v.id or d >= 3.0) and self._lion_detour(w, o, v, hx, hy):
+            return                                         # the elephant follows us round the lion
 
         if self.state in ("run", "kill") and v.hp <= 15.0 and not self.anywhere and self.waiters:
             # one blow from death (an elephant hit is 10): no more luring with this one - a fresh waiter

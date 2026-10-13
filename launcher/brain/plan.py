@@ -44,12 +44,56 @@ def demands(b):
         b.food_emergency = True                  # (the old brain's flag: berry range 60, far herds, more scouts)
         cap = b.berry_capacity()
     berries = bool(b.berry_clusters()) and (cap > 0 or not b.any_of(gs.GRANARY))
+    # the first six belong to the berries; with no berries left they may take any job (age7: the berries
+    # ran out, the six were allowed no hunt / farm / wood demand and all fell into the last 'wood' sink -
+    # 14 choppers while the hunts had room)
+    first6 = 6 if berries else 0
+
+    # 0b. the next food found BEFORE the berries end (the user: a player has the next patch ready for
+    #     the six): under 400 food left on the bushes next to a granary / the TC, the far patches, far
+    #     herds and far elephants are opened at once
+    if b.any_of(gs.GRANARY) and not getattr(b, "far_food", False):
+        grans = b.complete(gs.GRANARY)
+        near = [o for o in s.gaia if o.type == gs.FORAGE and o.amount > 0 and
+                (any(o.dist(g0.x, g0.y) < 8 for g0 in grans) or (tc and o.dist(tc.x, tc.y) < 8))]
+        left = sum(o.amount for o in near)
+        if grans and left < 400:
+            b.far_food = True
+            b.say("plan: %d food left on the near bushes - the next food (far patches, herds, elephants) is opened now" % left)
 
     # 1. the first six: berries, or the search for the first bush
     if berries:
-        out.append(Demand("berry", min(6, n), 6, 1, indices=BERRY_SIX))
+        bcap = max(1, min(6, cap))                # (70 food left a picker: the others go elsewhere)
+        out.append(Demand("berry", min(bcap, n), bcap, 1, indices=BERRY_SIX))
     elif not b.any_of(gs.GRANARY):
         out.append(Demand("search", 0, 6, 1, indices=BERRY_SIX))
+    else:
+        # the berries are gone: the six go to the food sites that lack villagers most (lowest load per
+        # capacity first), before anybody else is given those places; nothing with room -> 2 look for food
+        load = {}
+        for v in vils:
+            k = b.hunt_site.get(v.id)
+            if k is not None:
+                load[k] = load.get(k, 0) + 1
+        rooms = []
+        for (key, x, y, state) in b.sites:
+            cap_k = b.site_cap.get(key, 0)
+            if cap_k <= 0 or (key[0] == "lure" and state in ("provoke", "run")):
+                continue                          # (a lure on its way takes its own lurer and waiters)
+            free_k = cap_k - load.get(key, 0)
+            if free_k > 0:
+                rooms.append((load.get(key, 0) / float(cap_k), key, x, y, free_k))
+        rooms.sort(key=lambda r: r[0])
+        given = 0
+        for _r, key, x, y, free_k in rooms:
+            if given >= 6:
+                break
+            k_n = min(free_k, 6 - given)
+            out.append(Demand(("hunt", key), 0, b.site_cap.get(key, 0), 1.1, indices=BERRY_SIX,
+                              score=lambda v, x=x, y=y: v.dist(x, y)))
+            given += k_n
+        if given < 6:
+            out.append(Demand("scout", 0, 2, 1.15, indices=BERRY_SIX))
 
     # 2. hunting sites run by the tasks (lure / herd push) - leads only from the 9th villager on
     for (key, x, y, state) in b.sites:
@@ -67,9 +111,9 @@ def demands(b):
             out.append(Demand(("hunt", key), min(cap, 1), min(cap, 1), 1.9,
                               ok=lambda i, v: i >= HUNT_FROM and v.hp >= 20, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
             out.append(Demand(("hunt", key), min(cap, 2), min(cap, 2), 1.9,
-                              ok=lambda i, v: i >= 6 and v.hp >= 20, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
+                              ok=lambda i, v: i >= first6 and v.hp >= 20, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
             out.append(Demand(("hunt", key), 0, cap, 4,                 # more waiters when there is room
-                              ok=lambda i, v: i >= 6, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
+                              ok=lambda i, v: i >= first6, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
         elif state in ("provoke", "run", "push"):
             need = 2 if key[0] == "herd" else 1
             out.append(Demand(("hunt", key), max(need, min(cap, 2)) if stage == 1 else need, max(cap, need), 3,
@@ -93,14 +137,17 @@ def demands(b):
             if key[0] == "lure" and state == "kill" and not home:
                 need, prio = min(cap, 4), 5              # a far elephant: four go and kill it
             out.append(Demand(("hunt", key), need, cap, prio,
-                              ok=lambda i, v: i >= 6, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
+                              ok=lambda i, v: i >= first6, score=lambda v, x=x, y=y: v.dist(x, y), pin=pinned))
 
     if getattr(b, "food_desperate", False):
-        out.append(Demand("scout", 2, 4, 1.8, ok=lambda i, v: i >= 6))     # nothing to eat anywhere near: find it
+        out.append(Demand("scout", 2, 4, 1.8, ok=lambda i, v: i >= first6))     # nothing to eat anywhere near: find it
     # 3. scouts: villagers 7 and 9 until enough food is known (the user: they scout on until the food
     #    is found; players still hunt 30+ tiles out in the Tool age)
     # (the user: scouting does not stop before the food known covers what the Bronze age still needs)
-    if stage <= 2 and not b.bronze_clicked and (b.known_food() < b.food_needed() or getattr(b, "far_food", False)):
+    # (once the market stands the farms are the food: the two scouts farm too - age1: 2 villagers scouted
+    #  through the whole Tool age while the Bronze click waited for food)
+    farms_ready = stage == 2 and b.complete(gs.MARKET)
+    if stage <= 2 and not b.bronze_clicked and not farms_ready and             (b.known_food(999.0) < 1.5 * b.food_needed() or getattr(b, "far_food", False)):
         out.append(Demand("scout", 2, 2, 2, indices=SCOUTS))     # (min 2: the wood demand below must not take them)
 
     # 4. wood - ahead of the hunts (priority 2.5): 4 choppers first (houses, the pit's 120 wood), then
@@ -112,9 +159,20 @@ def demands(b):
             out.append(Demand("wood", min(4 if n < 14 else 6, max(0, n - 8)), 6, 2.5, ok=lambda i, v: i >= FIRST_WOOD))
             out.append(Demand("wood", 0, 99, 4, ok=lambda i, v: i >= FIRST_WOOD))      # everybody spare chops
         else:
-            out.append(Demand("wood", min(6, max(0, n - 8)), 6, 2.5, ok=lambda i, v: i >= FIRST_WOOD))
+            eco = b.eco_forecast()
+            if eco is not None:
+                k = eco["wood_n"]                 # (the user: food and wood ready at the same moment)
+                out.append(Demand("wood", min(k, max(0, n - 8)), k, 2.5, ok=lambda i, v: i >= FIRST_WOOD))
+            else:
+                out.append(Demand("wood", min(6, max(0, n - 8)), 6, 2.5, ok=lambda i, v: i >= FIRST_WOOD))
     elif stage == 2:
-        out.append(Demand("wood", min(b.wood_target(), 7), 7, 4, ok=lambda i, v: i >= 6))
+        eco = b.eco_forecast()
+        if eco is not None:
+            k = eco["wood_n"]
+            out.append(Demand("wood", k, k, 4, ok=lambda i, v: i >= first6))
+        else:
+            wt = b.wood_target()
+            out.append(Demand("wood", min(wt, 10), max(7, min(wt, 10)), 4, ok=lambda i, v: i >= first6))
     else:
         stables = max(1, len(b.complete(gs.STABLE)))
         gold_want = min(2 + 5 * stables, max(2, (n - 10) // 2))     # ~5 miners per stable (knowledge.py)
@@ -125,13 +183,34 @@ def demands(b):
         wood_want = b.wood_target()
         if b.res(gs.WOOD) > 600:
             wood_want = min(wood_want, 4)
-        if b.known_gold():
-            out.append(Demand("gold", gold_want, gold_want, 3, ok=lambda i, v: i >= 6))
-        out.append(Demand("wood", wood_want, wood_want, 4, ok=lambda i, v: i >= 6))
+        if getattr(b, "archer_plan", False) and getattr(b, "archer_kind", "chariot") == "improved":
+            # "cung A" (Minoan): the improved bowman is 40 food + 20 gold - food : gold villagers 2 : 1,
+            # and 4 on wood (6 while the wood is under 200) for the houses, the wall and the ranges
+            n_busy = sum(1 for v in vils if isinstance(b.role.get(v.id), tuple)
+                         or b.role_name(v.id) in ("scout", "search") or v.id in b.defenders or v.id in b.helpers)
+            wood_want = 6 if b.res(gs.WOOD) < 200 else 4
+            rest = max(0, n - n_busy - wood_want)
+            gold_want = int(round(rest / 3.0))
+            if b.res(gs.GOLD) > 500 and b.res(gs.FOOD) < 300:
+                gold_want = max(1, int(round(rest / 5.0)))     # (gold piling up: more on food)
+        elif getattr(b, "archer_plan", False):
+            # the chariot archer is 40 food + 70 wood, no gold (the user: the archer plan eats wood, not
+            # gold - wood : food villagers = 2 : 1). Gold only for the few techs that cost it (Scale
+            # Armor Archers 50, priests): 2 miners while the bank is under 200, else none
+            gold_want = 2 if b.res(gs.GOLD) < 200 else 0
+            n_busy = sum(1 for v in vils if isinstance(b.role.get(v.id), tuple)
+                         or b.role_name(v.id) in ("scout", "search") or v.id in b.defenders or v.id in b.helpers)
+            gatherers = max(0, n - n_busy - gold_want)
+            wood_want = max(4, int(round(gatherers * 2 / 3.0)))
+            if b.res(gs.WOOD) > 800 and b.res(gs.FOOD) < 300:
+                wood_want = max(4, int(round(gatherers / 2.0)))   # (wood piling up: back towards 1 : 1)
+        if b.known_gold() and gold_want > 0:
+            out.append(Demand("gold", gold_want, gold_want, 3, ok=lambda i, v: i >= first6))
+        out.append(Demand("wood", wood_want, wood_want, 4, ok=lambda i, v: i >= first6))
 
     # 5. extra berry capacity (a second patch) and farms
     if berries and cap > 6:
-        out.append(Demand("berry2", 0, cap - 6, 7, ok=lambda i, v: i >= 6))
+        out.append(Demand("berry2", 0, cap - 6, 7, ok=lambda i, v: i >= first6))
     if stage >= 2 and b.complete(gs.MARKET):
         # one farmer per farm plus a few to finish / start the next ones - never a crowd on the same farms
         # (the user, 13/10: far too many villagers on the same farms; 28 "farmers" for 10 farms)
@@ -150,10 +229,31 @@ def demands(b):
     #    work left, scouts go and find some (players never put more than ~7 on wood); else wood
     if stage == 1 and b.woodline_placed and t - (b.start_time or 0) < 480 and \
             (b.food_items() < b.FOOD_ITEMS_WANTED or b.food_emergency):
-        out.append(Demand("scout", 0, 2, 10, ok=lambda i, v: i >= 6))        # two more look for food, before min 8
+        out.append(Demand("scout", 0, 2, 10, ok=lambda i, v: i >= first6))        # two more look for food, before min 8
     if stage == 1 and b.woodline_placed:
         wood_cap = 5 if b.res(gs.WOOD) >= 300 else 8                         # (players hold < 300 wood in Stone)
-        out.append(Demand("wood", 0, wood_cap, 18, ok=lambda i, v: i >= 6))  # wood is capped at 8 (players: 6-7)
-        out.append(Demand("scout", 0, 4 if b.food_short else 2, 19, ok=lambda i, v: i >= 6))        # no food work: look for food (2 at most)
+        eco = b.eco_forecast()
+        if eco is not None:
+            wood_cap = eco["wood_n"]              # (the forecast decides the choppers, not a flat 5-8)
+        if eco is not None and eco["need_wood"] <= 0:
+            # wood enough for the whole step (+150): no more than the forecast's 4 chop, the spare ones
+            # find food (age2: 12 choppers, 1 600 wood, food stuck at 174 for 300 s)
+            wood_cap = eco["wood_n"]
+            out.append(Demand("scout", 0, 4, 17, ok=lambda i, v: i >= first6))
+        out.append(Demand("wood", 0, wood_cap, 18, ok=lambda i, v: i >= first6))  # wood is capped at 8 (players: 6-7)
+        out.append(Demand("scout", 0, 4 if b.food_short else 2, 19, ok=lambda i, v: i >= first6))        # no food work: look for food (2 at most)
     out.append(Demand("wood", 0, 99, 20))
+    # a villager that stayed idle on a job (IDLEFIX) is kept off that job for 60 s
+    ban = {vid: name for vid, (name, until) in getattr(b, "role_ban", {}).items() if until > t and name}
+    if ban:
+        for d in out:
+            if d.pin or (d.name == "wood" and d.prio >= 20):
+                continue                          # (pins stay; the last sink takes anybody)
+            base = d.name[0] if isinstance(d.name, tuple) else d.name
+
+            def ok2(i, v, f=d.ok, base=base):
+                if ban.get(v.id) == base:
+                    return False
+                return f is None or f(i, v)
+            d.ok = ok2
     return out
