@@ -334,9 +334,34 @@ class Brain:
             self.on_target[target.ptr] = self.on_target.get(target.ptr, 0) + len(units)
         gx, gy = (target.x, target.y) if target is not None else (x, y)
         if gx is not None and gy is not None:
+            units = self.keep_from_raiders(units, gx, gy)
+            if not units:
+                return
             self.gate_request(units, gx, gy)
         self.g.order(units, target, x, y)
         self.mark(units, key or ("o", target.id if target else (round(x or 0), round(y or 0))))
+
+    def keep_from_raiders(self, units, gx, gy):
+        """Villagers are not sent to a target within FLEE_R of an enemy soldier (the user: villagers run from
+        Bronze units) - they stay retreated instead (v10b: 30 villagers died per game, most of them re-sent to
+        their wood line / farm / site 8 s after fleeing, with the raiders still there)."""
+        raiders = getattr(self, "_raiders", None)
+        if not raiders:
+            return units
+        if not any(math.hypot(e.x - gx, e.y - gy) < FLEE_R for e in raiders):
+            return units
+        t = self.now()
+        tc = self.tc()
+        out = []
+        for u in units:
+            if u.cls != gs.CLS_VILLAGER:
+                out.append(u)
+                continue
+            if t >= self.retreat_until.get(u.id, 0) and tc is not None:
+                self.retreat_until[u.id] = t + 8
+                self.g.move([u], tc.x, tc.y)
+                self.mark([u], ("flee",))
+        return out
 
     def move(self, units, x, y):
         units = [u for u in units if u]
@@ -509,7 +534,7 @@ class Brain:
         times = []
         for step in (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
                      self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.hold_far_loads, self.gate_keeper, self.wall_leak_check, self.wall_repair, self.buildings_program, self.stables,
-                     self.research_plan, self.army, self.artifacts, self.self_defence, self.watchdogs, self.stats,
+                     self.research_plan, self.army, self.artifacts, self.self_defence, self.lion_defence, self.watchdogs, self.stats,
                      self.food_audit):
             t1 = time.time()
             step()
@@ -1202,6 +1227,8 @@ class Brain:
         unseen = sum(BUILD_COST.get(p.btype, 0) for p in self.pending if not p.confirmed)
         if self.s.res[gs.WOOD] - unseen < cost:
             return False
+        if any(math.hypot(e.x - x, e.y - y) < FLEE_R + 2 for e in (getattr(self, "_raiders", None) or ())):
+            return False                                 # (enemy soldiers at the spot: later)
         self.gate_request(builders, x, y)          # (builders sent across the sealed wall: a gate opens)
         self.g.build(builders, btype, x, y)
         self.s.res[gs.WOOD] -= cost
@@ -1235,7 +1262,7 @@ class Brain:
                     self.bad_spots.add((round(p.x, 1), round(p.y, 1), p.btype))
                     # the game's own answer for that spot now: (code, id of the blocking object) - the 4-6 % of
                     # flat, object-free footprints it refuses have no explanation yet (15/10)
-                    why = ""
+                    why, bo = "", None
                     try:
                         ok_now = self.g.can_place(self.me, p.btype, p.x, p.y)
                         code, blocker = getattr(self.g, "last_place_reason", (None, None))
@@ -1245,6 +1272,8 @@ class Brain:
                     except Exception:  # noqa: BLE001
                         pass
                     self.say("placement failed for %d at (%.1f,%.1f)%s" % (p.btype, p.x, p.y, why))
+                    if bo is not None and bo.owner == self.me and bo.kind == gs.KIND_COMBAT:
+                        self.bad_spots.discard((round(p.x, 1), round(p.y, 1), p.btype))   # (one of ours stood there: the spot is fine)
                     if "outside the wall" in (p.purpose or ""):
                         of = self.__dict__.setdefault("_outside_fail", {})
                         of[p.btype] = (of.get(p.btype, (0, t))[0] + 1, t)
@@ -1260,6 +1289,16 @@ class Brain:
                 continue
             alive = [self.obj_by_id(vid) for vid in p.ids]
             alive = [v for v in alive if v is not None and self.role_name(v.id) == "build"]
+            raided = any(math.hypot(e.x - p.x, e.y - p.y) < FLEE_R + 2 for e in (getattr(self, "_raiders", None) or ()))
+            if raided:
+                # enemy soldiers at the site: nobody is sent, the builders there run (v10e: a wall house at (15,17)
+                # took a new builder six times in 47 s, 17 Persian builders shot by chariot archers one after another)
+                if alive and t - getattr(p, "raid_say", -99) > 30:
+                    p.raid_say = t
+                    self.say("site %d at (%.0f,%.0f) raided: builders released" % (p.btype, p.x, p.y))
+                self.release_builders(p)
+                keep.append(p)
+                continue
             if not alive or (t - p.t > 45 and len(alive) < 2 and t - getattr(p, "helped", -99) > 45):
                 # its builder died or was taken away, or it is taking too long: send the nearest villager
                 extra = [v for v in self.builders_near(1, p.x, p.y) if v.id not in p.ids]
@@ -1270,6 +1309,19 @@ class Brain:
                     alive.append(extra[0])
                     self.say("foundation %d at (%.1f,%.1f) gets villager #%d" % (p.btype, p.x, p.y, extra[0].id))
             progress = False
+            # builders that neither reach the site nor move (a build action on it, no path - v10b: 4 villagers
+            # 5 tiles from a herd pit for 584 s) count as stuck too
+            still = getattr(p, "still", {})
+            moved = False
+            for v in alive:
+                lx, ly, lt = still.get(v.id, (v.x, v.y, t))
+                if math.hypot(v.x - lx, v.y - ly) > 0.7 or v.dist(p.x, p.y) <= 3.5:
+                    still[v.id] = (v.x, v.y, t)
+                    moved = True
+                elif t - lt > 20:
+                    still[v.id] = (v.x, v.y, t)
+                    p.stuck = getattr(p, "stuck", 0) + 1
+            p.still = still
             for v in alive:
                 if self.idle(v) or not self.recent(v.id, within=8):
                     act = self.r.action(v)
@@ -1279,7 +1331,7 @@ class Brain:
                             p.stuck = getattr(p, "stuck", 0) + 1   # ordered again and still standing far off
                 else:
                     progress = True
-            if progress:
+            if progress and moved:
                 p.stuck = 0
             if getattr(p, "stuck", 0) >= 4 and t - p.t > 40:
                 # nobody can get there (the user's 1v2: the Shang bot's wood-line pit 40 tiles out, 5
@@ -1338,6 +1390,11 @@ class Brain:
         cx, cy = x0 + size / 2.0, y0 + size / 2.0
         if (round(cx, 1), round(cy, 1), btype) in self.bad_spots:
             return False
+        # one of our villagers standing on the footprint: the game refuses the foundation (v10c, 15/10: every
+        # unexplained refusal was "code 6, blocker = Builder / Lumberjack")
+        for v in self.s.villagers:
+            if x0 - 0.3 <= v.x < x0 + size + 0.3 and y0 - 0.3 <= v.y < y0 + size + 0.3:
+                return False
         return True
 
     def place_checked(self, btype, cands):
@@ -1616,8 +1673,23 @@ class Brain:
     def gate_request(self, units, gx, gy):
         """Units ordered across the sealed wall: delete the wall house nearest their way (the user:
         delete a house to pass, close it again at once). At most two gaps open at a time."""
-        if not self.wall_sealed or not self.wall:
+        if not self.wall:
             return
+        if not self.wall_sealed:
+            # (not sealed as a whole, but the stretch between the unit and its target may be: v10b, 4 gold
+            #  miners inside the north wall, the mine 6 tiles beyond it, "idle after 6 orders" for 3 minutes)
+            if not any(self.wall_inside(u.x, u.y) != self.wall_inside(gx, gy) for u in units if u is not None and hasattr(u, "x")):
+                return
+            cache = self.__dict__.setdefault("_gate_bfs", {})
+            k = (int(gx), int(gy), self.ticks)
+            if k not in cache:
+                dist = self.pm.bfs([(int(gx), int(gy))], max_cost=10 * 70)
+                cache.clear()
+                cache[k] = dist
+            dist = cache[k]
+            if any(dist[int(u.y) * self.pm.W + int(u.x)] >= 0 for u in units if u is not None and hasattr(u, "x")
+                   and 0 <= int(u.x) < self.pm.W and 0 <= int(u.y) < self.pm.H):
+                return                                   # a way round exists: no hole needed
         slots = self.wall_slots()
         if any(abs(gx - cx) < 2.5 and abs(gy - cy) < 2.5 for cx, cy in slots):
             return                                       # building / repairing the wall itself
@@ -1825,8 +1897,10 @@ class Brain:
             return
         mine = list(self.s.villagers) + self.military()
         for g in list(self.gates):
-            if any(o.dist(g["x"], g["y"]) < 4.0 for o in mine):
-                g["used"] = t
+            if any(o.dist(g["x"], g["y"]) < 4.0 for o in mine) or any(
+                    o.dist(g["x"], g["y"]) < 14.0 and not self.wall_inside(o.x, o.y) for o in self.s.villagers):
+                g["used"] = t                            # (a villager still out there, e.g. at a mine 6 tiles beyond the
+                                                         #  wall, keeps it open: v10e, deleted and rebuilt every trip)
             if t - g["t"] > 240:
                 self.gates.remove(g)                     # lost track: the wall program refills the slot
                 continue
@@ -2275,8 +2349,8 @@ class Brain:
             if isinstance(r, tuple):            # building or a hunting job
                 if r[0] == "build":
                     continue
-            if v.id in self.defenders or v.id in self.helpers or v.id in self.repairers:
-                continue                        # chasing an enemy scout / killing a lured elephant
+            if v.id in self.defenders or v.id in self.helpers or v.id in self.repairers                     or v.id in self.__dict__.get("lion_helpers", {}):
+                continue                        # chasing an enemy scout / killing a lured elephant / a lion
             if self.now() < self.retreat_until.get(v.id, 0):
                 continue                        # running from an enemy soldier (self_defence)
             d = "hunt" if v.id in self.leads else self.desired_role(i, v)
@@ -4752,6 +4826,38 @@ class Brain:
                 return True
         return False
 
+    def lion_defence(self):
+        """A lion attacking one of our workers: the victim and up to 3 villagers within 7 tiles hit it together
+        (v10d: one lion at a wood line / farm killed 5 Greek villagers one by one in 2.5 minutes - the lion
+        rule only covered scouts). The helpers are released once the lion is dead or gone."""
+        t = self.now()
+        s = self.s
+        helpers = self.__dict__.setdefault("lion_helpers", {})          # villager id -> lion id
+        live = {a.id: a for a in s.gaia if a.id in self.lions and a.hp > 0}
+        for vid, lid in list(helpers.items()):
+            if lid not in live:
+                helpers.pop(vid, None)
+        if not live:
+            return
+        mine = {o.ptr: o for o in s.villagers}
+        for a in live.values():
+            act = self.r.action(a)
+            if not act or act[1] not in mine:
+                continue
+            victim = mine[act[1]]
+            group = [v for v in s.villagers if v.id == victim.id or (v.dist(a.x, a.y) <= 7 and v.hp >= 12
+                                                                      and helpers.get(v.id, a.id) == a.id)]
+            group.sort(key=lambda v: (v.id != victim.id, v.dist(a.x, a.y)))
+            group = group[:4]
+            for v in group:
+                helpers[v.id] = a.id
+                if not self.recent(v.id, ("o", a.id), within=2.5):
+                    self.g.order([v], a)                     # (straight to the game: no raider / gate check)
+                    self.mark([v], ("o", a.id))
+            if t - getattr(self, "_lion_say", -99) > 20:
+                self._lion_say = t
+                self.say("lion #%d attacks villager #%d: %d villagers fight it" % (a.id, victim.id, len(group)))
+
     def flee_lion(self, v):
         """A scouting villager inside a lion's range steps straight out of it; one the lion already
         attacks fights back (it cannot outrun a lion) and goes on scouting if it wins."""
@@ -5297,7 +5403,8 @@ class Brain:
         for ang in range(-150 if wide else -60, 151 if wide else 61, 15):
             a = math.radians(ang)
             dx, dy = ex * math.cos(a) - ey * math.sin(a), ex * math.sin(a) + ey * math.cos(a)
-            for dist in range(int(R) + 3, int(R) + (29 if wide else 17), 2):
+            for dist in range(int(R) + 6, int(R) + (29 if wide else 19), 2):   # (R+3 was on the real cut line:
+                                                                                #  v10d P2, no barracks ever, no Bronze)
                 hx, hy = tc.x + dx * dist, tc.y + dy * dist
                 if not (5 <= hx < W - 5 and 5 <= hy < H - 5):
                     continue
@@ -5327,7 +5434,7 @@ class Brain:
                 if inside is not None:
                     if any((xx, yy) in inside for yy in range(y0 - 1, y0 + size + 1) for xx in range(x0 - 1, x0 + size + 1)):
                         continue
-                elif math.hypot(cx - tc.x, cy - tc.y) < R + 2:
+                elif math.hypot(cx - tc.x, cy - tc.y) < R + 4:
                     continue
                 if cut and any((xx, yy) in cut for yy in range(y0 - 1, y0 + size + 1) for xx in range(x0 - 1, x0 + size + 1)):
                     continue                             # (not on the wall's own line)
@@ -5344,7 +5451,16 @@ class Brain:
         inside = self.wall_inside_tiles()
         R = getattr(self, "wall_fixed_R", None) or 26
         cands = self._hub_footprints(btype, hub[0], hub[1], 14 if wide else 9, inside, self.keep_clear(), R)
-        return self.place_checked(btype, cands)
+        spot = self.place_checked(btype, cands)
+        miss = self.__dict__.get("_hub_miss", 0) + 1 if spot is None else 0
+        self._hub_miss = miss
+        if miss >= 3:
+            # the cluster has no room any more (the wall line moved onto it, buildings filled it): choose again
+            self.say("military cluster at (%.0f,%.0f) has no free footprint (%d tries): chosen again" % (hub[0], hub[1], miss))
+            self.mil_hub = None
+            self._hub_miss = 0
+            self._hub_try_t = -99
+        return spot
 
     def outside_spot(self, btype):
         """The user: military buildings stand outside the house wall (troops spawn outside, no gate
@@ -6670,6 +6786,7 @@ class Brain:
             # before the Bronze click only Bronze units clear the work areas (the early ones are fought
             # by the villagers next to whoever they hit)
             raiders = [e for e in raiders if bronze_unit(e)]
+        self._raiders = raiders
         if raiders and tc0:
             for v in s.villagers:
                 if t < self.retreat_until.get(v.id, 0) or v.id in self.defenders:

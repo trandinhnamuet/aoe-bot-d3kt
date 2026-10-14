@@ -459,7 +459,10 @@ class Lure(Task):
         if self.state == "run" and (tgt != v.id or d >= 3.0) and self._lion_detour(w, o, v, hx, hy):
             return                                         # the elephant follows us round the lion
 
-        if self.state in ("run", "kill") and v.hp <= 15.0 and not self.anywhere and self.waiters:
+        if self.state in ("run", "kill") and not self.anywhere and self.waiters and (
+                v.hp <= 15.0 or (v.hp < getattr(v, "maxhp", 25.0) - 0.5 and d <= 2.5)):
+            # (or hit at all while the elephant is on it: v10b, the lurer handed over at 15 hp with the
+            #  elephant 1.7 tiles away and died 2 s later - the next blow comes before the run order lands)
             # one blow from death (an elephant hit is 10): no more luring with this one - a fresh waiter
             # takes over (lure9 at x2: 3 lurers died at 5 hp waiting for the next hand-over point).
             # The fresh one must be near: while it walks out, the hurt lurer keeps running home with
