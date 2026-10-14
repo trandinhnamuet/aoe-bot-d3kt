@@ -3565,11 +3565,27 @@ class Brain:
             if not far or t - h.cl_t > 12:
                 h.cl_phase, h.cl_t = "advance", t
             return
+        if t - getattr(h, "cl_dbg", -99) > 10:
+            h.cl_dbg = t
+            prevpos = getattr(h, "cl_tpos", None)
+            moved = math.hypot(tgt.x - prevpos[0], tgt.y - prevpos[1]) if prevpos else 0.0
+            h.cl_tpos = (tgt.x, tgt.y)
+            sl_dbg = slots(CL_ARC if phase == "advance" else CL_WAIT, phase == "advance")
+            self.say("CLDBG herd %s phase %s %.0f s, gazelle #%d (%.1f,%.1f) moved %.1f in 10 s | %s" % (
+                h.key, phase, t - h.cl_t, tgt.id, tgt.x, tgt.y, moved,
+                " ".join("#%d d%.1f slot%.1f %s" % (u.id, u.dist(tgt.x, tgt.y), u.dist(x, y), (self.r.action(u) or ("-",))[0])
+                         for (u, x, y) in sl_dbg[:5])))
         if phase == "advance":
             sl = slots(CL_ARC, True)
             # (ready = every hunter within spear range of the target: the arc slots move with a wandering
             #  gazelle, 0.45 tiles of a slot was never met - ab4 / ab5: "N not there after 4 s" every time)
-            far = [(u, x, y) for (u, x, y) in sl if u.dist(tgt.x, tgt.y) > SPEAR_REACH]
+            # the group is the hunters within 8 tiles; one walking in from 25-40 tiles is not waited for
+            # (ffa5: "out of range" every time - a newly assigned hunter far away was part of the wait)
+            group = [(u, x, y) for (u, x, y) in sl if u.dist(tgt.x, tgt.y) <= 8.0]
+            inr = [(u, x, y) for (u, x, y) in group if u.dist(tgt.x, tgt.y) <= SPEAR_REACH]
+            far = [(u, x, y) for (u, x, y) in group if u.dist(tgt.x, tgt.y) > SPEAR_REACH]
+            if group and (len(inr) >= 2 or (len(group) == 1 and inr)):
+                far = []                                 # (two spears at once are enough to kill)
             # one of them is inside the hop range already (the gazelle is about to jump): throw now, everybody
             # within 3.3 - waiting for the rest lost every gazelle (ab8: "out of range after 6 s" 41 of 43)
             close = any(u.dist(tgt.x, tgt.y) < 2.4 for (u, _x, _y) in sl)
@@ -3577,8 +3593,8 @@ class Brain:
                 if u.dist(x, y) > 0.5 and not self.recent(u.id, ("cl", "a"), within=1.0):
                     self.move([u], x, y)
                     self.mark([u], ("cl", "a"))
-            if not far or close or t - h.cl_t > 6:
-                throwers = [(u, x, y) for (u, x, y) in sl if u.dist(tgt.x, tgt.y) <= 3.3] if close and far else sl
+            if (group and not far) or close or t - h.cl_t > 4:
+                throwers = [(u, x, y) for (u, x, y) in sl if u.dist(tgt.x, tgt.y) <= 3.3] or group or sl
                 for (u, _x, _y) in throwers:            # everybody in the same tick (the user)
                     self.order([u], tgt)
                 h.cl_phase, h.cl_t = "throw", t
@@ -3586,7 +3602,7 @@ class Brain:
                 if t - getattr(h, "cl_say", -99) > 20:
                     h.cl_say = t
                     self.say("CLUSTER herd %s: %d hunters throw at gazelle #%d together (%s)" % (
-                        h.key, len(sl), tgt.id, "all within spear range" if not far else "%d out of range after 6 s" % len(far)))
+                        h.key, len(sl), tgt.id, "%d in spear range" % len(inr) if not far else "%d out of range after 4 s" % len(far)))
             return
         if phase == "throw":
             if tgt.hp <= 0 or t - h.cl_t > 6:
