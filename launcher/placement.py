@@ -21,6 +21,8 @@ class Grid:
                 continue
             if o.kind == gs.KIND_STATIC and o.cls == 14:      # passable ground decoration
                 continue
+            if o.cls == 16 and o.rx <= 0 and o.ry <= 0:     # a tree stump: a house may close the gap it leaves
+                continue
             rx = max(o.rx, 0.5)
             ry = max(o.ry, 0.5)
             x0, x1 = int(math.floor(o.x - rx)), int(math.ceil(o.x + rx))

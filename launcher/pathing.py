@@ -27,7 +27,12 @@ def is_obstacle(o):
     if o.kind == gs.KIND_BUILDING or o.kind == gs.KIND_TREE:
         return True
     if o.kind in (gs.KIND_STATIC, gs.KIND_DOPPEL):
-        return o.cls != 14                       # 14 = ground decoration (grass clumps, small rocks)
+        # 14 = ground decoration (grass clumps, small rocks); 16 = the stump a chopped-out tree leaves (kind 30,
+        # radius 0, no wood): units walk over it (the user, 14/10: walls stayed open for good where the forest
+        # was cut - the stumps were counted as forest, the bot saw no gap). No collision radius = no obstacle.
+        if o.cls in (14, 16):
+            return False
+        return o.rx > 0 or o.ry > 0
     return False
 
 

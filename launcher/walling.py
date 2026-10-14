@@ -343,11 +343,17 @@ def _add_edge(adj, u, v, cap):
     adj[v].append([u, 0, len(adj[u]) - 1])
 
 
-def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None):
+SOFT_CAP = 80                                         # a farm tile on the cut (a house tile is 100 + distance)
+
+
+def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None, soft=None):
     """The cheapest set of tiles whose blocking separates the TC (and anchors) from every passable
     tile rmax or more from the TC, given the terrain / buildings in `work`. Tiles in `uncuttable`
     (a function (x, y) -> bool) and unexplored tiles can be walked through but never built on.
-    Returns (cut tiles as a list, flow) - flow >= INF means no cut exists (unexplored all round)."""
+    Returns (cut tiles as a list, flow) - flow >= INF means no cut exists (unexplored all round).
+    `soft` = blocked tiles that are a weak barrier (our farms: troops cannot cross a farm, but it falls fast -
+    the user, 14/10): in the graph at SOFT_CAP + distance, a little under a new house, far over the free
+    terrain; a soft tile on the cut needs no house."""
     import sys
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
     cx, cy = tc
@@ -356,7 +362,7 @@ def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None)
     index = {}
     for yy in range(int(cy) - R, int(cy) + R + 1):
         for xx in range(int(cx) - R, int(cx) + R + 1):
-            if not work.passable(xx, yy):
+            if not work.passable(xx, yy) and not (soft and (xx, yy) in soft):
                 continue
             if (xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 > (rmax + 1.5) ** 2:
                 continue
@@ -375,6 +381,17 @@ def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None)
         d = math.hypot(xx + 0.5 - cx, yy + 0.5 - cy)
         # (unexplored tiles can be cut - a footprint there waits until they are explored; treating
         #  them as uncuttable made the cut infinite whenever one unexplored lane led out: wall1)
+        if soft and (xx, yy) in soft:
+            _add_edge(adj, 2 * k, 2 * k + 1, SOFT_CAP + int(d))
+            for dx, dy in STEP4:
+                j = index.get((xx + dx, yy + dy))
+                if j is not None:
+                    _add_edge(adj, 2 * k + 1, 2 * j, INF)
+            if (xx, yy) in src_tiles:
+                _add_edge(adj, S, 2 * k, INF)
+            if d >= rmax:
+                _add_edge(adj, 2 * k + 1, T, INF)
+            continue
         cuttable = not uncuttable(xx, yy)
         cap = 100 + int(d) + (50 if explored is not None and not explored(xx, yy) else 0)
         if dear is not None and dear(xx, yy):
@@ -430,12 +447,13 @@ def _inside_set(work, tc, rmax):
 
 
 def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored=None, size=2, max_slots=60,
-             rounds=6):
+             rounds=6, soft=()):
     """The terrain-following enclosure: minimum-cut tiles between the town and the field, covered by
     size x size footprints; re-cut with the footprints in place until the town is sealed.
     Returns a Plan (mode 'wide'): openings = cut tiles still uncovered, slots = footprints to build,
     leaks = cut tiles no footprint can cover; plan.inside = the enclosed tiles, plan.cut = the cut."""
     work = pm.copy()
+    soft = set(soft or ())
 
     def uncuttable(x, y):
         for (x0, y0, x1, y1) in uncuttable_rects:
@@ -483,12 +501,15 @@ def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored
     def uncuttable_full(x, y):
         return uncuttable(x, y) or not coverable(x, y)
 
-    slots, leaks, all_cut = [], [], []
+    slots, leaks, all_cut, all_soft = [], [], [], []
     flow = 0
     for _round in range(rounds):
-        cut, flow = min_cut_tiles(work, tc, anchors, rmax, uncuttable_full, explored, dear=in_keep_clear)
+        cut, flow = min_cut_tiles(work, tc, anchors, rmax, uncuttable_full, explored, dear=in_keep_clear, soft=soft)
         if flow >= INF:
             break
+        p_soft = [t for t in cut if t in soft]
+        cut = [t for t in cut if t not in soft]         # (a farm on the cut is the wall there: no house)
+        all_soft.extend(p_soft)
         if not cut:
             leaks = []                                    # sealed: nothing is left to cover
             break
@@ -534,4 +555,5 @@ def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored
     p.inside = inside
     p.cut = all_cut
     p.flow = flow
+    p.soft_cut = all_soft                               # (the farm tiles the wall leans on)
     return p
