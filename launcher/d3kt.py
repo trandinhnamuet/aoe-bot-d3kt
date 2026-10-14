@@ -1675,6 +1675,10 @@ class Brain:
         delete a house to pass, close it again at once). At most two gaps open at a time."""
         if not self.wall:
             return
+        tc0 = self.tc()
+        if tc0 is not None and any(e.dist(tc0.x, tc0.y) < 30 for e in (getattr(self, "_raiders", None) or ())):
+            return                                       # (enemy soldiers near the town: no hole in the wall - v11a,
+                                                         #  a house deleted at 1118 s, 3 cavalry in the town at 1146 s)
         if not self.wall_sealed:
             # (not sealed as a whole, but the stretch between the unit and its target may be: v10b, 4 gold
             #  miners inside the north wall, the mine 6 tiles beyond it, "idle after 6 orders" for 3 minutes)
@@ -1904,7 +1908,9 @@ class Brain:
             if t - g["t"] > 240:
                 self.gates.remove(g)                     # lost track: the wall program refills the slot
                 continue
-            if t - g["used"] > 5 and t - g["t"] > 15 and self.can_afford(wood=30):
+            tc0 = self.tc()
+            raid = tc0 is not None and any(e.dist(tc0.x, tc0.y) < 30 for e in (getattr(self, "_raiders", None) or ()))
+            if (raid or (t - g["used"] > 5 and t - g["t"] > 15)) and self.can_afford(wood=30):
                 if self.start_build(gs.HOUSE, (g["x"], g["y"]), self.builders_near(1, g["x"], g["y"]), "(gate closed)"):
                     self.gates.remove(g)
                     self.say("gate: wall house at (%.0f,%.0f) rebuilt" % (g["x"], g["y"]))
