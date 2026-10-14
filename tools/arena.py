@@ -29,6 +29,7 @@ ap.add_argument("--no-rec", action="store_true")
 ap.add_argument("--civs", default="", help="comma list of civ names for P1, P2, ... (empty = random)")
 ap.add_argument("--age", default="Default", help="starting age: Default, Tool Age, Bronze Age (micro tests)")
 ap.add_argument("--resources", default="Default", help="Default, Medium, High")
+ap.add_argument("--reveal", action="store_true", help="lobby Reveal Map (tests: every tile explored at the start)")
 ap.add_argument("--teams", default="", help="comma list of teams for P1, P2, ... (2v2: 1,1,2,2; empty = all alone)")
 ap.add_argument("--game", default=r"D:\Game\AoE-HD", help="game folder (AoE HD or the normal AOE1R)")
 ap.add_argument("--brain", default="new", choices=("old", "new"), help="new = brain.brain.NewBrain (one allocation table), old = d3kt.Brain")
@@ -142,6 +143,7 @@ def main():
     cfg.ai_team_mode = "ffa"
     cfg.teams = [int(x) for x in args.teams.split(",") if x.strip()] if args.teams else []
     cfg.age, cfg.resources = args.age, args.resources
+    cfg.reveal_map = bool(args.reveal)
     s = orchestrator.Session(r"D:\Game\AoESolo", cfg, log=L, status=lambda m: None, dll=DLL,
                              dplaunch=r"D:\Game\AoESolo\hook\dplaunch.exe", pool=pool)
     s.game_dir = GAME

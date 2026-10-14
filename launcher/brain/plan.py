@@ -10,6 +10,7 @@ Stage 2 (đời 2):  no new villagers; berries 6, wood 5-7 (market + stable + fa
 Stage 3 (đời 3):  gold 2 + 2 per stable, wood 4-8 by stock, hunts, farms take the rest.
 """
 import math
+import os
 
 import gamestate as gs
 from brain.jobs import Demand
@@ -217,6 +218,8 @@ def demands(b):
             wood_want = max(4, int(round(gatherers * 2 / 3.0)))
             if b.res(gs.WOOD) > 800 and b.res(gs.FOOD) < 300:
                 wood_want = max(4, int(round(gatherers / 2.0)))   # (wood piling up: back towards 1 : 1)
+        if str(b.me) in os.environ.get("AOESOLO_TEST_WRITING", "").split(","):
+            gold_want = max(gold_want, 3)               # (tests only: the gold for Writing)
         if b.known_gold() and gold_want > 0:
             out.append(Demand("gold", gold_want, gold_want, 3, ok=lambda i, v: i >= first6))
         out.append(Demand("wood", wood_want, wood_want, 4, ok=lambda i, v: i >= first6))

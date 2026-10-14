@@ -107,6 +107,8 @@ class Reader:
         self._owners = {}
         self.W = self.H = 0
         self.terrain = b""
+        self.elev = b""
+        self.shape = b""
         self._static_cache = {}   # ptr -> Obj (gaia static resources)
         self._tick = 0
 
@@ -118,7 +120,23 @@ class Reader:
         self.H = self.m.u32(mp + 0xC)
         tiles = self.m.u32(mp + 4)
         raw = self.m.read(tiles, self.W * self.H * 24) or b""
-        self.terrain = bytes(raw[i * 24 + 5] for i in range(self.W * self.H)) if raw else b""
+        # tile byte 5 = bits 0-4 terrain id + bits 5-7 ELEVATION (the whole byte was taken for the terrain id: on
+        # raised ground - 60 % of a Hill Country map - water / forest were never recognised); byte 4 = slope shape
+        # (0 = flat)
+        n = self.W * self.H
+        self.terrain = bytes(raw[i * 24 + 5] & 31 for i in range(n)) if raw else b""
+        self.elev = bytes(raw[i * 24 + 5] >> 5 for i in range(n)) if raw else b""
+        self.shape = bytes(raw[i * 24 + 4] for i in range(n)) if raw else b""
+
+    def elev_at(self, x, y):
+        if not (0 <= x < self.W and 0 <= y < self.H) or not self.elev:
+            return 0
+        return self.elev[int(y) * self.W + int(x)]
+
+    def shape_at(self, x, y):
+        if not (0 <= x < self.W and 0 <= y < self.H) or not self.shape:
+            return 0
+        return self.shape[int(y) * self.W + int(x)]
 
     def terrain_at(self, x, y):
         if not (0 <= x < self.W and 0 <= y < self.H) or not self.terrain:
@@ -264,6 +282,12 @@ class Snapshot:
         # every enemy object whatever its visibility: what the achievements screen tells a player
         # (villagers, army, buildings per enemy) - the doctrine sizes the army from this
         self.enemy_all = [o for o in allobjs if o.owner in enemies and o.state <= 2]
+        # allied town centres (team games share the map with the ally: its berries, herds and elephants
+        # are seen at once - ms8: the Palmyran bot built its first granary in its ally's town, 110 tiles away)
+        self.ally_tcs = [(o.x, o.y) for o in allobjs if o.owner not in enemies and o.owner not in (0, r.me)
+                         and o.type == TOWN_CENTER and o.state <= 2]
+        self.ally_ids = sorted({o.owner for o in allobjs if o.owner not in enemies and o.owner not in (0, r.me)
+                                and o.owner > 0})
         for o in allobjs:
             if o.owner == r.me:
                 continue

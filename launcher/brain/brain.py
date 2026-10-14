@@ -53,6 +53,29 @@ class NewBrain(d3kt.Brain):
             return
         jobs = self.alloc.assign(vs, dem, self.jobs)
         self.jobs = jobs
+        import demo_dump
+        if demo_dump.enabled() and self.now() >= 330 and not self.__dict__.get("_demo_done", {}).get("villagers"):
+            rows = []
+            by_ptr = {o.ptr: o for o in self.s.gaia + self.s.mine}
+            for i, v in enumerate(vs):
+                act = self.r.action(v)
+                tg = by_ptr.get(act[1]) if act and act[1] else None
+                j = jobs.get(v.id)
+                rows.append({"id": v.id, "idx": i, "x": round(v.x, 2), "y": round(v.y, 2), "type": v.type,
+                             "job": list(j) if isinstance(j, tuple) else j, "amount": round(float(v.amount or 0), 1),
+                             "act": [act[0], act[2]] if act else None,
+                             "target": [tg.type, round(tg.x, 2), round(tg.y, 2)] if tg is not None else None})
+            cnt = {}
+            for j in jobs.values():
+                k = j[0] if isinstance(j, tuple) else j
+                cnt[k] = cnt.get(k, 0) + 1
+            tc_ = self.tc()
+            demo_dump.write(self, "villagers", {
+                "vils": rows, "counts": cnt,
+                "demands": [[d.name if isinstance(d.name, str) else list(d.name), d.min, d.max, d.prio] for d in dem],
+                "sites": [[list(k) if isinstance(k, tuple) else k, x, y, st] for (k, x, y, st) in self.sites],
+                "res": {"food": self.res(0), "wood": self.res(1), "gold": self.res(3)},
+                "win": demo_dump.window(self, tc_.x, tc_.y, 26)})
         t_work = time.time()
         counts = {}
         for v in vs:

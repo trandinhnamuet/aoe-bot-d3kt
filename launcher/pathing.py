@@ -10,7 +10,7 @@ import math
 
 import gamestate as gs
 
-WATER = {1, 22, 23}
+WATER = {1, 14, 15, 16, 22, 23}   # water, and the impassable terrains (Desert Impas 14, Water Impass 15, Grass Impass 16)
 UNREACHABLE = -1
 NEIGHBOURS = ((1, 0, 10), (-1, 0, 10), (0, 1, 10), (0, -1, 10), (1, 1, 14), (1, -1, 14), (-1, 1, 14), (-1, -1, 14))
 

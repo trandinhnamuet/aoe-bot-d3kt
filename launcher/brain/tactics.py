@@ -81,8 +81,10 @@ def assess(b):
         elif o.kind == 70 and "Artifact" not in o.name:
             c = unit_class(o.name)
             total[c] = total.get(c, 0) + 1
-        elif o.type == 109 and enemy_tc is None:
-            enemy_tc = (o.x, o.y)
+        elif o.type == 109 and (enemy_tc is None or (tc and math.hypot(o.x - tc.x, o.y - tc.y) <
+                                                     math.hypot(enemy_tc[0] - tc.x, enemy_tc[1] - tc.y))):
+            enemy_tc = (o.x, o.y)               # (the NEAREST enemy TC: demo3 2v2 sent the army to the one 110 tiles
+                                                #  away, the other was 57)
     if total:
         enemy = total
     enemy_v = max(enemy_v_seen, sum(VALUE.get(c, 1.0) * n for c, n in total.items()))
@@ -112,10 +114,15 @@ def assess(b):
         pick = "camel"                   # the user: Palmyran / Persian field camels
     # the map's gold is gone (no mine left that we know of, little in the bank): no more gold units -
     # the stables make chariots (food + wood, after the Wheel) or scouts (food), archers come in
+    off = getattr(b, "civ_off", set())
+    if pick == "camel" and 124 in off:
+        pick = "cavalry"                 # (the civ tree: no camels)
+    if pick == "cavalry" and 69 in off:
+        pick = "camel" if 124 not in off else ("chariot" if 68 not in off and 28 in getattr(b, "techs_done", set()) else "scout")
     gold_out = b.age >= 3 and not b.known_gold() and b.res(gs.GOLD) < 200 \
         and t - (b.start_time or 0) > GOLD_OUT_AFTER_S
     if gold_out:
-        pick = "chariot" if 28 in getattr(b, "techs_done", set()) else "scout"
+        pick = "chariot" if 28 in getattr(b, "techs_done", set()) and 68 not in off else "scout"
     want_temple = (priest_civ and b.age >= 3) or enemy.get("priest", 0) >= 1
     # archers against infantry / hoplites (the user: "when to use archers"); siege against a walled-in
     # enemy that out-develops us (the user: "BK + stone throwers"); the Iron Age when Bronze does not end it
@@ -130,7 +137,7 @@ def assess(b):
     want_archery = b.age >= 3 and (enemy.get("hoplite", 0) + enemy.get("infantry", 0) >= 4 or gold_short or archer_civ
                                    or gold_out or getattr(b, "archer_plan", False))
     done = getattr(b, "techs_done", set())
-    ranged = "chariot_archer" if 28 in done else ("improved_bowman" if 56 in done else "bowman")
+    ranged = "chariot_archer" if 28 in done and 59 not in off else ("improved_bowman" if 56 in done else "bowman")
     if getattr(b, "archer_kind", "chariot") == "improved":
         # (Minoan: "cung A" - the user: always upgraded to the best, 2 áo = Composite Bowman in Iron)
         ranged = "composite_bowman" if 57 in done else ("improved_bowman" if 56 in done else "bowman")

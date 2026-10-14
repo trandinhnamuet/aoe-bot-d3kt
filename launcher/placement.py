@@ -45,6 +45,11 @@ class Grid:
                     return False
                 if not self.snap.explored(xx, yy):
                     return False
+                # 6000 footprints asked of the game's own can_place (14/10): a 3x3 building (granary, pit, market,
+                # barracks...) is refused when ANY of its 9 tiles is a slope (0 of 376), a 2x2 house is not
+                # (341 of 353 accepted on slopes / uneven ground)
+                if size >= 3 and x0 <= xx < x0 + size and y0 <= yy < y0 + size and self.r.shape_at(xx, yy):
+                    return False
         return True
 
     def find(self, btype, ax, ay, rmin=2, rmax=10, prefer=None, margin=1):
