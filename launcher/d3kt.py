@@ -553,10 +553,15 @@ class Brain:
                 self.on_target[a[1]] = self.on_target.get(a[1], 0) + 1
         t0 = time.time()
         times = []
-        for step in (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
+        steps = (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
                      self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.hold_far_loads, self.gate_keeper, self.wall_leak_check, self.wall_repair, self.buildings_program, self.stables,
                      self.research_plan, self.army, self.e_trap, self.artifacts, self.self_defence, self.lion_defence, self.watchdogs, self.stats,
-                     self.food_audit):
+                     self.food_audit)
+        if os.environ.get("AOESOLO_STAGE") == "chase":
+            # (tests only: the staged chase - the economy runs, the army / wall / research programs are replaced)
+            steps = (self.learn, self.update_pending, self.houses, self.town_center, self.villagers, self.run_tasks,
+                     self.farm_reset, self.hold_far_loads, self.stage_chase, self.e_trap, self.self_defence, self.watchdogs, self.stats)
+        for step in steps:
             t1 = time.time()
             step()
             times.append((time.time() - t1, step.__name__))
@@ -4928,6 +4933,116 @@ class Brain:
                 return True
         return False
 
+    # ---------------------------------------------------------------- staged chase (tests only)
+    def stage_chase(self):
+        """AOESOLO_STAGE=chase: P1 builds a market and 3 ranges, researches the Wheel, trains 10 chariot archers and
+        sends them at the enemy's town, every one of them attacking the nearest enemy soldier; P2 trains 6 and keeps
+        them home, and runs them away (toward the far side of the map) as soon as an enemy soldier is within 10
+        tiles. The e_trap of P1 is what is watched."""
+        t = self.now()
+        S = self.__dict__.setdefault("_stage", {"say": -99})
+        tc = self.tc()
+        if tc is None:
+            return
+        me_hunter = self.me == 1
+        want = 10 if me_hunter else 6
+        # buildings: a market, then 3 ranges (2 for P2)
+        if not self.any_of(gs.MARKET) and not self.pending_of(gs.MARKET) and self.can_afford(wood=150):
+            spot, why = self.building_spot(gs.MARKET)
+            if spot:
+                self.start_build(gs.MARKET, spot, self.builders_near(3, *spot), "(stage) " + why)
+        n_rng = len(self.any_of(gs.ARCHERY_RANGE)) + len(self.pending_of(gs.ARCHERY_RANGE))
+        cond = (n_rng < (3 if me_hunter else 2), self.can_afford(wood=150), bool(self.complete(gs.MARKET)))
+        if t - S.get("cond_say", -99) > 30:
+            S["cond_say"] = t
+            self.say("STAGE range conditions: few ranges %s, wood ok %s, market %s" % cond)
+        if all(cond):
+            # the barracks first (the building tree: a range needs it - stage5 never built one), then the ranges
+            btype = gs.BARRACKS if not self.any_of(gs.BARRACKS) and not self.pending_of(gs.BARRACKS) else gs.ARCHERY_RANGE
+            if btype == gs.ARCHERY_RANGE and not self.complete(gs.BARRACKS):
+                btype = None
+            spot = None
+            if btype is not None:
+                for dx in range(-14, 15):
+                    for dy in range(-14, 15):
+                        x0, y0 = int(tc.x + dx - 1.5), int(tc.y + dy - 1.5)
+                        d = math.hypot(dx, dy)
+                        if 7 <= d <= 14 and self.footprint_ok(btype, x0, y0, self.keep_clear()) and                                 self.g.can_place(self.me, btype, x0 + 1.5, y0 + 1.5):
+                            spot = (x0 + 1.5, y0 + 1.5)
+                            break
+                    if spot:
+                        break
+            bl = self.builders_near(3, *spot) if spot else []
+            if spot and bl:
+                self.start_build(btype, spot, bl, "(stage)")
+            elif btype is not None and t - S.get("rng_say", -99) > 20:
+                S["rng_say"] = t
+                self.say("STAGE %d: spot %s, builders %d" % (btype, spot, len(bl)))
+        # the Wheel
+        done = getattr(self, "techs_done", set())
+        try:
+            states = self.g.research_states(self.me) or []
+            wheel = states[TECH_WHEEL] if len(states) > TECH_WHEEL else 0
+        except Exception:  # noqa: BLE001
+            wheel = 0
+        if wheel == 1 and t - S.get("wheel_t", -99) > 8:
+            mk = [m for m in self.complete(gs.MARKET) if not self.r.producing(m)]
+            if mk and self.can_afford(food=175, wood=75):
+                self.g.research(mk[0], TECH_WHEEL)
+                S["wheel_t"] = t
+        archers = [u for u in self.military() if u.type == gs.CHARIOT_ARCHER]
+        if wheel == 3 and len(archers) + S.get("queued", 0) < want:
+            for b in self.complete(gs.ARCHERY_RANGE):
+                if not self.r.producing(b) and self.can_afford(food=40, wood=70):
+                    self.g.train(b, gs.CHARIOT_ARCHER)
+        enemy = [e for e in self.s.enemy if e.kind == gs.KIND_COMBAT and e.cls != gs.CLS_VILLAGER and e.hp > 0]
+        if t - S["say"] > 30:
+            S["say"] = t
+            self.say("STAGE %s: market %d, ranges %d (any %d, pending %d), wood %d, wheel %s, chariot archers %d/%d, enemy soldiers seen %d" % (
+                "hunter" if me_hunter else "runner", len(self.complete(gs.MARKET)), len(self.complete(gs.ARCHERY_RANGE)),
+                len(self.any_of(gs.ARCHERY_RANGE)), len(self.pending_of(gs.ARCHERY_RANGE)), self.res(gs.WOOD), wheel, len(archers), want, len(enemy)))
+        if not archers:
+            return
+        if me_hunter:
+            if len(archers) < want and not S.get("go"):
+                return
+            S["go"] = True
+            if enemy:
+                cx = sum(u.x for u in archers) / len(archers)
+                cy = sum(u.y for u in archers) / len(archers)
+                tgt = min(enemy, key=lambda e: math.hypot(e.x - cx, e.y - cy))
+                if t - S.get("atk_t", -99) > 1.5:
+                    S["atk_t"] = t
+                    self.g.order(archers, tgt)           # (straight to the game: every archer on the same unit)
+            else:
+                etc = None
+                for o in getattr(self.s, "enemy_all", []):
+                    if o.type == gs.TOWN_CENTER:
+                        etc = (o.x, o.y)
+                        break
+                if etc and t - S.get("mv_t", -99) > 6:
+                    S["mv_t"] = t
+                    self.g.move(archers, etc[0], etc[1])
+        else:
+            cx = sum(u.x for u in archers) / len(archers)
+            cy = sum(u.y for u in archers) / len(archers)
+            near = [e for e in enemy if math.hypot(e.x - cx, e.y - cy) <= 10]
+            if near and t - S.get("run_t", -99) > 2:
+                S["run_t"] = t
+                ex = sum(e.x for e in near) / len(near)
+                ey = sum(e.y for e in near) / len(near)
+                ux, uy = unit(cx - ex, cy - ey)
+                W, H = self.r.W, self.r.H
+                gx = min(W - 2.0, max(1.0, cx + ux * 20))
+                gy = min(H - 2.0, max(1.0, cy + uy * 20))
+                self.g.move(archers, gx, gy)
+                if t - S.get("run_say", -99) > 10:
+                    S["run_say"] = t
+                    self.say("STAGE runner: %d archers run from %d enemies to (%.0f,%.0f)" % (len(archers), len(near), gx, gy))
+            elif not near and t - S.get("home_t", -99) > 10:
+                S["home_t"] = t
+                self.g.move(archers, tc.x + 3, tc.y + 3)
+
     # ---------------------------------------------------------------- the foundation trap ("vay E")
     ETRAP_AHEAD = 4.0        # tiles ahead of the running enemy the line of foundations goes (order lag ~0.6 s real)
     ETRAP_MAX = 6            # foundations per trap
@@ -5030,8 +5145,11 @@ class Brain:
                 why = "speed %.2f" % speed
             hx, hy = (vx / speed, vy / speed) if speed > 0 else (0.0, 0.0)
             near = min(chasers, key=lambda u: u.dist(e.x, e.y))
-            if why is None and (e.x - near.x) * hx + (e.y - near.y) * hy < 0:
-                why = "not away"
+            ccx = sum(u.x for u in chasers) / len(chasers)
+            ccy = sum(u.y for u in chasers) / len(chasers)
+            if why is None and (e.x - ccx) * hx + (e.y - ccy) * hy < 0:
+                why = "not away"                         # (away from the chasers' centre: the nearest chaser may be
+                                                         #  on its far side when it is surrounded - stage6)
             px, py = e.x + hx * self.ETRAP_AHEAD, e.y + hy * self.ETRAP_AHEAD
             if why is None and not self.s.explored(px, py):
                 why = "ahead unexplored"
