@@ -5,7 +5,7 @@ import os
 
 import gamestate as gs
 
-LIMIT = {"granary": 1, "pit": 1, "wall": 1, "villagers": 1, "army": 1, "lure": 2, "vis": 2}
+LIMIT = {"granary": 1, "pit": 1, "wall": 1, "villagers": 1, "army": 1, "lure": 2, "vis": 2, "wallshot": 4}
 
 
 def enabled():
@@ -28,6 +28,9 @@ def write(b, kind, data):
         if tc is not None:
             data.setdefault("tc", [tc.x, tc.y])
         path = os.path.join(d, "P%d_%s_%d.json" % (b.me, kind, n))
+        while os.path.exists(path):                      # (another game wrote into the same dir: never overwrite)
+            n += 1
+            path = os.path.join(d, "P%d_%s_%d.json" % (b.me, kind, n))
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f)
         b.say("DEMO dump %s -> %s" % (kind, path))

@@ -118,9 +118,10 @@ LURE_TIMEOUT = 150.0     # a lure that has not brought the elephant home by then
 BERRY_SHARE_TILES = 2.5   # a bush already worked by one costs this many tiles of extra walk (2-3 may share)
 BERRY_MAX_PER_BUSH = 3
 WAIT_LIMIT = 30.0        # seconds villagers wait at far food for its granary / pit before just gathering      # villagers per elephant (killing at the TC, then eating)
-EARLY_DEFENDERS = 5      # before the Bronze click: at most this many villagers fight one early unit
-SCOUT_CALL_R = 5         # a lone enemy scout: villagers this close to where it struck fight back
-SCOUT_CHASE_R = 4        # ... until it is further than this from that spot
+EARLY_DEFENDERS = 5      # at most this many villagers fight one lone early unit
+SCOUT_CALL_R = 8         # a lone Stone / Tool-age enemy unit: villagers this close to it join in (the user, 15/10)
+SCOUT_TRIGGER_R = 3      # ... once it comes this close to one of our villagers
+SCOUT_CHASE_R = 3        # ... until it is further than this from every worker: back to work
 LION_SAFE = 7.0          # scouting villagers keep this far from lions (their attack trigger range)
 GAZELLE_SAFE = 5.0       # ... and this far from gazelles, so the herd stays together for the hunt       # hunting sites at once (plus the berries: 2-4 food areas)
 ARTIFACT_EDGE_AFTER = 360.0
@@ -1608,6 +1609,41 @@ class Brain:
             for (x0, y0, sz) in p.slots:
                 rects.add((x0, y0, sz))                  # every footprint ever planned: the wall houses
 
+    def wall_shot(self, when):
+        """Tests only (AOESOLO_DEMO_DIR): what the bot sees round its town and the wall plans it would make now,
+        at the Tool click and at the Bronze click (the user, 15/10: 8 towns to review and propose the standard wall)."""
+        try:
+            tc = self.tc()
+            if tc is None:
+                return
+            kc = self.wall_keep_clear()
+            refused = [(x0, y0, x0 + 2, y0 + 2) for (x0, y0), n in self.__dict__.get("slot_fail", {}).items() if n >= 2]
+            tx0, ty0 = int(math.floor(tc.x - 1.5)), int(math.floor(tc.y - 1.5))
+            refused.append((tx0 - 3, ty0 - 3, tx0 + 6, ty0 + 6))
+            explored = lambda x, y: bool(self.s.explored(x, y))   # noqa: E731
+            soft = set()
+            for f in self.any_of(gs.FARM):
+                fx0, fy0, fx1, fy1 = pathing.footprint(f)
+                soft |= {(xx, yy) for yy in range(fy0, fy1) for xx in range(fx0, fx1)}
+            anchors = [(p.x, p.y) for p in self.any_of(gs.STORAGE_PIT)[:1]] + [(g0.x, g0.y) for g0 in self.any_of(gs.GRANARY)[:1]]
+            plans = {}
+            for R in (14, 20, 26, 33, 40):
+                anchors_R = [(ax, ay) for ax, ay in anchors if math.hypot(ax - tc.x, ay - tc.y) <= R - 3]
+                p = walling.plan_cut(self.pm.copy(), (tc.x, tc.y), anchors_R, R, keep_clear=kc, uncuttable_rects=refused,
+                                     explored=explored, soft=soft)
+                plans[str(R)] = {"slots": [list(sl) for sl in p.slots], "cut": [list(c) for c in getattr(p, "cut", [])],
+                                 "leaks": [list(c) for c in p.leaks], "inside": [list(c) for c in sorted(getattr(p, "inside", []) or [])],
+                                 "soft_cut": [list(c) for c in getattr(p, "soft_cut", [])], "flow": p.flow,
+                                 "cost": len(p.slots) + 3 * len(p.leaks), "region": p.region_size}
+            fixed = getattr(self, "wall_fixed_R", None)
+            demo_dump.write(self, "wallshot", {
+                "when": when, "tc": [tc.x, tc.y], "fixed_R": fixed, "houses": len(self.any_of(gs.HOUSE)),
+                "wall_rects": [list(r) for r in self.__dict__.get("wall_rects", set())],
+                "plans": plans, "win": demo_dump.window(self, tc.x, tc.y, 46)})
+            self.say("WALLSHOT %s: plans %s" % (when, {R: (len(v["slots"]), len(v["leaks"]), v["region"]) for R, v in plans.items()}))
+        except Exception as e:  # noqa: BLE001
+            self.say("WALLSHOT error: %r" % (e,))
+
     def cut_async(self, key, tag, pm, *a, **kw):
         """walling.plan_cut in a worker thread, one at a time per bot (a 40-tile cut is 2-9 s of Python:
         the tick - every villager order - used to wait for it). Returns the finished Plan for `key` (once;
@@ -2056,10 +2092,20 @@ class Brain:
         farms_left = max(0, getattr(self, "_farms_want", 0) - len(self.any_of(gs.FARM)) - len(self.pending_of(gs.FARM)))
         tool_ok = self.tool_wood_free(60) and (self.res(gs.WOOD) >= 300 or
                                                (len(self.any_of(gs.FARM)) >= 4 and self.res(gs.WOOD) >= 60 + 75 * farms_left))
+        # the user (15/10): the wall is built after the Bronze click, and after the 4-8 farms the free villagers
+        # can man; before the click only the compulsory buildings stand on the wall line (an enemy soldier
+        # near the town is the one exception)
+        farms_after = 0
+        if self.bronze_clicked:
+            wild = sum(self.site_cap.get(k, 0) for (k, _x, _y, _st) in self.sites) + self.berry_capacity()
+            farms_after = max(0, min(8, 12 - wild) - len(self.any_of(gs.FARM)) - len(self.pending_of(gs.FARM)))
+        tc0 = tc
+        raid_near = any(e.dist(tc0.x, tc0.y) < 30 for e in (getattr(self, "_raiders", None) or ()))
         wall_fill = (self.wall and self.res(gs.WOOD) >= 60 and self.now() - self.last_wall_house > 8
-                     and ((self.age >= 2 and (self.bronze_clicked or tool_ok))
-                          or self.enemy_threat())
-                     and len(houses) < 45)      # (gate11: the fill stalled 10 min in Tool age saving 300 wood)
+                     and ((self.bronze_clicked and (farms_after == 0 or self.res(gs.WOOD) >= 60 + 75 * farms_after))
+                          or raid_near)                 # (not enemy_threat(): true once ANY enemy is in Bronze -
+                                                         #  rules2: Greek filled 25 wall houses before its own click)
+                     and len(houses) < 45)
         if not (need_pop or wall_fill) or not self.can_afford(wood=30):
             return
         if (not self.woodline_placed and self.any_of(gs.GRANARY) and houses
@@ -2261,6 +2307,8 @@ class Brain:
             self.tool_clicked = True
             self.last_train = t
             self.say("Tool Age clicked with %d villagers" % nvil)
+            if demo_dump.enabled():
+                self.wall_shot("tool")
             return
         A = self.tactics
         if (A and A.get("want_iron") and self.age == 3 and not getattr(self, "iron_clicked", False)
@@ -2276,6 +2324,8 @@ class Brain:
             self.bronze_clicked = True
             self.last_train = t
             self.say("Bronze Age clicked")
+            if demo_dump.enabled():
+                self.wall_shot("bronze")
             self.bronze_click_t = t
             return
         if self.age == 1 and not self.tool_clicked:
@@ -6822,7 +6872,8 @@ class Brain:
             lone_scout = e.type == gs.SCOUT and not any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil)
             # before the Bronze click an early unit (scout, clubman, axeman, slinger, bowman) is fought by
             # the villagers next to the one it hits; a Bronze unit always makes them run (the user)
-            early_fight = victim.cls == gs.CLS_VILLAGER and not self.bronze_clicked and not bronze_unit(e)
+            early_fight = victim.cls == gs.CLS_VILLAGER and not bronze_unit(e) and \
+                not any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil)   # (a lone early unit, any age)
             if victim.cls == gs.CLS_VILLAGER and not lone_scout and not early_fight and self.tc():
                 # the user: keep the villagers. One hit by a soldier runs for the TC (our army is sent to
                 # whoever attacks our villagers, see army()); a lone scout is beaten by villagers instead
@@ -6851,14 +6902,32 @@ class Brain:
                                  % (victim.id, e.name, e.id))
             lone = e.type == gs.SCOUT and not any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil)
             if (lone or early_fight) and e.id not in self.scout_hunts:
-                self.scout_hunts[e.id] = (victim.x, victim.y, t)
-                self.say("enemy %s #%d attacks our %s before the Bronze click: villagers within %d tiles fight back, "
-                         "the others keep working" % (e.name, e.id, victim.name, SCOUT_CALL_R))
+                self.scout_hunts[e.id] = (e.x, e.y, t)
+                self.say("enemy %s #%d attacks our %s: villagers within %d tiles fight back, the others keep working"
+                         % (e.name, e.id, victim.name, SCOUT_CALL_R))
+        # the user (15/10): a lone Stone / Tool-age unit (scout, clubman, bowman...) that comes within 3 tiles of a
+        # villager is attacked at once, whatever our age; a Bronze unit always makes them run
+        for e in enemy_mil:
+            if e.id in self.scout_hunts or bronze_unit(e):
+                continue
+            if any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil):
+                continue                                 # not alone
+            if any(v.dist(e.x, e.y) <= SCOUT_TRIGGER_R for v in s.villagers):
+                self.scout_hunts[e.id] = (e.x, e.y, t)
+                self.say("lone enemy %s #%d within %d tiles of a villager: villagers within %d tiles attack it"
+                         % (e.name, e.id, SCOUT_TRIGGER_R, SCOUT_CALL_R))
         for sid, (ax, ay, t0) in list(self.scout_hunts.items()):
             e = by_id.get(sid)
-            if e is None or e.dist(ax, ay) > SCOUT_CHASE_R:
-                self.drop_scout_hunt(sid, "gone" if e is None else "ran %.1f tiles away" % e.dist(ax, ay))
+            if e is None:
+                self.drop_scout_hunt(sid, "gone")
                 continue
+            workers = [v for v in s.villagers if v.id not in self.defenders]
+            d_work = min((v.dist(e.x, e.y) for v in workers), default=99.0)
+            if d_work > SCOUT_CHASE_R + 1.0 and t - t0 > 3:
+                self.drop_scout_hunt(sid, "is %.1f tiles from every worker" % d_work)
+                continue
+            ax, ay = e.x, e.y                            # (the unit moves: the call radius follows it)
+            self.scout_hunts[sid] = (ax, ay, t0)
             if bronze_unit(e):
                 self.drop_scout_hunt(sid, "is a Bronze unit: villagers run")
                 continue
