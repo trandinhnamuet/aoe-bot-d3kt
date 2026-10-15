@@ -399,4 +399,6 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import multiprocessing
+    multiprocessing.freeze_support()   # (the frozen exe: a child process of the wall-cut pool / a brain process
+    main()                             #  would otherwise run the launcher again)

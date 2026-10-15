@@ -5,6 +5,7 @@ import threading
 import time
 
 import aoemem
+import brainproc
 import d3kt
 import gamewin as gw
 import lobby
@@ -454,12 +455,25 @@ class Session:
                 enemies = [player_no]
             else:
                 enemies = [x for x in bot_nos + [player_no] if x != me]
-            g = aoemem.Game(b.mem, b.hook)
-            th = threading.Thread(target=self._bot_thread, args=(g, me, enemies), daemon=True)
-            th.start()
+            if brainproc.enabled():
+                # one brain per process (15/10): no GIL shared between the bots
+                th = brainproc.start(b.pid, me, enemies, self.log, pop_limit=self.cfg.pop_limit)
+            else:
+                g = aoemem.Game(b.mem, b.hook)
+                th = threading.Thread(target=self._bot_thread, args=(g, me, enemies), daemon=True)
+                th.start()
             self.threads.append(th)
         mon = threading.Thread(target=self._resign_monitor, args=(numbers, player_no), daemon=True)
         mon.start()
+        threading.Thread(target=self._stop_watch, daemon=True).start()
+
+    def _stop_watch(self):
+        """Raises the stop event of every brain process when the session stops or the AIs resign."""
+        while not (self.stop_flag or getattr(self, "stop_bots", False)):
+            time.sleep(0.5)
+        for th in self.threads:
+            if hasattr(th, "stop"):
+                th.stop()
 
     RESIGN_RATIO = 3.0 / 7.0      # AIs together below 3:7 of the player's villagers + army -> resign (the user
     RESIGN_AFTER = 300.0          # keeps this rule: an AI that far behind has lost; never in the first 5 min)
@@ -509,6 +523,13 @@ class Session:
     def shutdown(self):
         self.stop_flag = True
         self.restore_settings()
+        for th in self.threads:
+            if hasattr(th, "stop"):
+                th.stop()
+        for th in self.threads:
+            if hasattr(th, "kill"):
+                th.join(5)
+                th.kill()
         for b in self.bots:
             b.kill()
         if self.pool:

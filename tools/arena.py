@@ -39,6 +39,7 @@ if args.params:
     os.environ["D3KT_PARAMS"] = os.path.abspath(args.params)
 
 import aoemem  # noqa: E402
+import brainproc  # noqa: E402
 import d3kt  # noqa: E402
 import lobby  # noqa: E402
 import orchestrator  # noqa: E402
@@ -183,13 +184,17 @@ def main():
             foes = [x for x in allp if x != me and (team_of.get(x, 0) == 0 or team_of.get(x) != team_of.get(me))]
             g = aoemem.Game(gp.mem, gp.hook)
             games[me] = g
-            stop = (lambda gg=g, mm=gp.mem: stop_flag[0] or
-                    (bool(gg.world()) and (mm.u32(gg.world() + 4) or 0) / 1000.0 > game_limit))
-            th = threading.Thread(target=d3kt.run, args=(g, me, foes),
-                                  kwargs=dict(log=L, stop=stop, pop_limit=200, period=0.6 / max(1.0, args.speed / 2.0)),
-                                  daemon=True)
-            th.start()
+            period = 0.6 / max(1.0, args.speed / 2.0)
+            if brainproc.enabled():
+                th = brainproc.start(gp.pid, me, foes, L, period=period, pop_limit=200, limit_s=game_limit)
+            else:
+                stop = (lambda gg=g, mm=gp.mem: stop_flag[0] or
+                        (bool(gg.world()) and (mm.u32(gg.world() + 4) or 0) / 1000.0 > game_limit))
+                th = threading.Thread(target=d3kt.run, args=(g, me, foes),
+                                      kwargs=dict(log=L, stop=stop, pop_limit=200, period=period), daemon=True)
+                th.start()
             ths.append(th)
+        L("brains: %s" % ("one process each" if brainproc.enabled() else "threads of this process"))
         games[allp[0]].set_speed(args.speed)
         L("game speed set to x%.1f" % args.speed)
         grant = os.environ.get("AOESOLO_GRANT", "")
@@ -236,7 +241,12 @@ def main():
     finally:
         stop_flag[0] = True
         for th in ths:
+            if hasattr(th, "stop"):
+                th.stop()
+        for th in ths:
             th.join(15)
+            if hasattr(th, "kill"):
+                th.kill()
         if rec_thread:
             time.sleep(3)
             rec_stop.set()

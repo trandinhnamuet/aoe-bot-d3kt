@@ -478,6 +478,7 @@ Người mới thường kích đời 3 ở phút 13–16.
 - Trận 1v7 của bạn: một bot "mất kết nối" và game treo. Nhật ký lỗi Windows cho thấy AOEBOT.EXE của bot đó **crash truy cập bộ nhớ** trong hàm tạo lệnh xây (0x4EB8E3): bộ não ra lệnh xây cho con dân vừa chết (ảnh chụp cũ 1–4 s vì 7 bộ não chạy cùng lúc), game đọc bộ nhớ đã giải phóng. Host chờ người chơi rơi mãi → treo.
 - Sửa: trước **mọi** lệnh (đi, đánh, dừng, xây, huấn luyện, nghiên cứu, xoá) bộ não đọc lại id tại con trỏ (+4) và máu (+0x30) của từng đối tượng; đối tượng không còn đúng thì bỏ khỏi lệnh, mục tiêu chết thì thành lệnh đi tới chỗ cũ.
 - Lưu ý tải: 7 bot trên một máy làm tick bộ não 1–4 s (837 cảnh báo chậm trong trận); nên chơi ≤ 3–4 bot hoặc chờ tối ưu tick.
+- **Mỗi não một tiến trình (15/10 chiều):** các bộ não không còn là luồng chung một tiến trình Python (chung GIL) mà mỗi bot một tiến trình con (`launcher/brainproc.py`), tự mở bộ nhớ và ống nối tới game của nó; launcher chỉ gom log qua hàng đợi và phát tín hiệu dừng. Đo 2 trận 8 người (7 bot + máy chủ ẩn), 8 phút game x2, cùng máy: tick trung bình **61 ms** (tiến trình) so với **192 ms** (luồng); tick tối đa 1,2 s so với 2,5 s; số lần STAT ghi tick > 0,5 s: 8 so với 74. `AOESOLO_BRAIN_PROCS=0` quay về luồng. Cũng sửa: `main.py` thiếu `multiprocessing.freeze_support()` từ khi bo nhà dùng tiến trình phụ (v1.2.13) – bản exe có thể mở thêm cửa sổ launcher khi tiến trình con khởi động.
 
 ### 3.10 Tự đầu hàng
 

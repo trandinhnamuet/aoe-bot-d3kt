@@ -2,7 +2,7 @@
 the foundation trap. One command dresses the stage and runs it through the arena:
 
     .venv/Scripts/python tools/stage.py chase            # 10 chariot archers (P1) chase 6 (P2) that run away
-    .venv/Scripts/python tools/stage.py chase --minutes 14 --tag trap3
+    .venv/Scripts/python tools/stage.py chase --minutes 20 --rec      # with an .aoerec recording to watch
 
 What it sets (env + arena flags):
   AOESOLO_STAGE=<stage>       the brain runs the stage's tick steps (d3kt.stage_<stage>) instead of the full game
@@ -29,6 +29,10 @@ if len(sys.argv) < 2 or sys.argv[1] not in STAGES:
     sys.exit(2)
 stage = STAGES[sys.argv[1]]
 extra = sys.argv[2:]
+args = list(stage["args"])
+if "--rec" in extra:                      # --rec: an AoE-MapCap recording (.aoerec) of the match to look at
+    extra.remove("--rec")
+    args.remove("--no-rec")
 if "--tag" not in extra:
     extra += ["--tag", "stage_" + sys.argv[1]]
 if "--minutes" not in extra:
@@ -36,6 +40,6 @@ if "--minutes" not in extra:
 env = dict(os.environ)
 env.update(stage["env"])
 here = os.path.dirname(os.path.abspath(__file__))
-cmd = [sys.executable, os.path.join(here, "arena.py")] + stage["args"] + extra
+cmd = [sys.executable, os.path.join(here, "arena.py")] + args + extra
 print(" ".join(cmd))
 sys.exit(subprocess.call(cmd, env=env, cwd=os.path.dirname(here)))

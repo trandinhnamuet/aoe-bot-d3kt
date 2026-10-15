@@ -210,7 +210,7 @@ def _cut_pool():
     global _CUT_POOL
     if _CUT_POOL is None:
         import concurrent.futures
-        _CUT_POOL = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+        _CUT_POOL = concurrent.futures.ProcessPoolExecutor(max_workers=int(os.environ.get("AOESOLO_CUT_WORKERS", "2")))
     return _CUT_POOL
 
 
