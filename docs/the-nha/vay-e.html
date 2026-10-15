@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vảy E lần đầu</title>
+<meta name="description" content="Khoảnh khắc bot vảy móng BE chặn đường một cung R địch đang chạy, kịch bản ép ngày 15/10.">
+<style>
+:root { --bg: #fffdf8; --fg: #2b2622; --muted: #6e665c; --line: #d9d2c5; --surface: #f4efe4; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #1f232b; --fg: #f2f3f5; --muted: #a8adb8; --line: #3a414d; --surface: #262b34; } }
+:root[data-theme="dark"] { --bg: #1f232b; --fg: #f2f3f5; --muted: #a8adb8; --line: #3a414d; --surface: #262b34; }
+body { margin: 0; padding: 20px 16px 60px; background: var(--bg); color: var(--fg); font: 16px/1.5 system-ui, "Segoe UI", sans-serif; }
+main { max-width: 1400px; margin: 0 auto; } h1 { font-size: 1.5rem; margin: 0 0 8px; } h2 { font-size: 1.1rem; margin: 24px 0 6px; }
+figure { margin: 0 0 16px; background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px; } figcaption { color: var(--muted); font-size: 0.9rem; margin-bottom: 6px; }
+img { width: 100%; height: auto; display: block; cursor: zoom-in; }
+#lb { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.92); z-index: 50; overflow: auto; cursor: zoom-out; } #lb.on { display: block; } #lb img { width: auto; max-width: none; margin: 0 auto; }
+code { background: var(--surface); padding: 1px 4px; border-radius: 3px; }
+</style></head><body><main>
+<h1>Vảy E chặn đường: lần bật đầu tiên</h1>
+<p>Kịch bản ép ngày 15/10 (2 bot Egyptian, bắt đầu đời 3, tài nguyên cao, bản đồ mở): P1 (xanh) có 10 cung R kéo sang làng P2 (đỏ); P2 có 6 cung R, hễ địch vào trong 10 ô là chạy. Bản ghi <code>D:\Game\AoE-MapCap\Video\Raw\2026-10-15_141016_tran1.aoerec</code>, giây <strong>1046 (17:26)</strong>, góc nhìn P1, quanh ô (121, 24).</p>
+<p>Log của P1: <code>ETRAP #5782 (Soldier-Chariot2) runs 1.1 tiles/s from 3 chasers into a forest edge: 3 foundations across its way at (121,24)</code>, rồi 2 s sau <code>chase of #5782 over (dead): 2 foundations, 3 orders, deleted in 20 s</code>. Móng xuất hiện 0,6 s thực sau lệnh; con cung R chết trước khi tới dãy móng, nên lần này chưa thấy được nó bị chặn; cơ chế kích hoạt, đặt móng và dọn móng đều chạy đúng.</p>
+<h2>Giây 1044: cung R đỏ (giữa ảnh, dưới) bắt đầu chạy xuống phía nam, cung xanh đuổi theo</h2>
+<figure><img src="img/etrap_1044.jpg" alt="giây 1044"></figure>
+<h2>Giây 1047: ngay sau khi vảy 3 móng trước mặt nó</h2>
+<figure><img src="img/etrap_1047.jpg" alt="giây 1047"></figure>
+<div id="lb"><img alt=""></div>
+<script>(function(){var lb=document.getElementById('lb'),im=lb.querySelector('img');document.addEventListener('click',function(e){var t=e.target;if(t.tagName==='IMG'&&!lb.contains(t)){im.src=t.src;lb.classList.add('on');}else if(lb.classList.contains('on')){lb.classList.remove('on');}});document.addEventListener('keydown',function(e){if(e.key==='Escape')lb.classList.remove('on');});})();</script>
+</main></body></html>
