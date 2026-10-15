@@ -22,6 +22,11 @@ STAGES = {
     "chase": dict(env={"AOESOLO_STAGE": "chase", "AOESOLO_ETRAPHIST": "1"},
                   args=["--players", "2", "--civs", "Egyptian,Egyptian", "--age", "Bronze Age", "--resources", "High",
                         "--reveal", "--no-rec"]),
+    # raid: P1's 10 chariot archers raid P2's villagers (P2 trains no army): the trap on villagers, the villagers'
+    # flight toward the TC / open ground, and the anti-trap are what is watched
+    "raid": dict(env={"AOESOLO_STAGE": "raid", "AOESOLO_ETRAPHIST": "1"},
+                 args=["--players", "2", "--civs", "Egyptian,Egyptian", "--age", "Bronze Age", "--resources", "High",
+                       "--reveal", "--no-rec"]),
 }
 
 if len(sys.argv) < 2 or sys.argv[1] not in STAGES:

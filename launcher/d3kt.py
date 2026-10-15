@@ -555,13 +555,13 @@ class Brain:
         times = []
         steps = (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
                      self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.hold_far_loads, self.gate_keeper, self.wall_leak_check, self.wall_repair, self.buildings_program, self.stables,
-                     self.research_plan, self.army, self.e_trap, self.artifacts, self.self_defence, self.lion_defence, self.watchdogs, self.stats,
+                     self.research_plan, self.army, self.e_trap, self.artifacts, self.self_defence, self.anti_trap, self.lion_defence, self.watchdogs, self.stats,
                      self.food_audit)
-        if os.environ.get("AOESOLO_STAGE") == "chase":
+        if os.environ.get("AOESOLO_STAGE") in ("chase", "raid"):
             # (tests only: the staged chase - the economy runs, the army / wall / research programs are replaced)
             steps = (self.learn, self.update_pending, self.houses, self.town_center, self.villagers, self.run_tasks,
                      self.farm_reset, self.hold_far_loads, self.stage_cheats, self.stage_chase, self.e_trap, self.self_defence,
-                     self.watchdogs, self.stats)
+                     self.anti_trap, self.watchdogs, self.stats)
         for step in steps:
             t1 = time.time()
             step()
@@ -4985,7 +4985,8 @@ class Brain:
         if tc is None:
             return
         me_hunter = self.me == 1
-        want = 10 if me_hunter else 6
+        raid = os.environ.get("AOESOLO_STAGE") == "raid"     # raid: the hunter's archers raid villagers, P2 has no army
+        want = 10 if me_hunter else (0 if raid else 6)
         # buildings: a market, then 3 ranges (2 for P2)
         if not self.any_of(gs.MARKET) and not self.pending_of(gs.MARKET) and self.can_afford(wood=150):
             spot, why = self.building_spot(gs.MARKET)
@@ -5039,7 +5040,8 @@ class Brain:
                 if n_now < want and not self.r.producing(b) and self.can_afford(food=40, wood=70 + reserve):
                     self.g.train(b, gs.CHARIOT_ARCHER)
                     n_now += 1
-        enemy = [e for e in self.s.enemy if e.kind == gs.KIND_COMBAT and e.cls != gs.CLS_VILLAGER and e.hp > 0]
+        enemy = [e for e in self.s.enemy if e.kind == gs.KIND_COMBAT and e.hp > 0 and "Artifact" not in e.name
+                 and (raid or e.cls != gs.CLS_VILLAGER)]
         if t - S["say"] > 30:
             S["say"] = t
             self.say("STAGE %s: market %d, ranges %d (any %d, pending %d), wood %d, wheel %s, chariot archers %d/%d, enemy soldiers seen %d" % (
@@ -5100,8 +5102,9 @@ class Brain:
         t = self.now()
         T = self.__dict__.setdefault("_etrap", {"hist": {}, "active": None, "cool": -99.0})
         s = self.s
-        enemy = [e for e in s.enemy if e.kind == gs.KIND_COMBAT and e.cls != gs.CLS_VILLAGER and e.hp > 0]
-        # positions of the enemy soldiers over the last 1.5 s: their heading and speed
+        enemy = [e for e in s.enemy if e.kind == gs.KIND_COMBAT and e.hp > 0 and "Artifact" not in e.name]
+        # (villagers too: 4 of the player's 7 traps on 15/10 were on wood-line villagers, 8 of 9 died)
+        # positions of the enemy units over the last 1.5 s: their heading and speed
         hist = T["hist"]
         for e in enemy:
             h = hist.setdefault(e.id, [])
@@ -5116,8 +5119,9 @@ class Brain:
             e = next((x for x in enemy if x.id == A["eid"]), None)
             # (the chase goes on while any of ours is within 10 tiles of it: archers re-target every shot, so
             #  "has an attack order on it" ended the first trap 4 s in - etrap1)
-            chasing = [u for u in self.military() if e is not None and u.dist(e.x, e.y) <= 10]
-            over = e is None or not chasing or min(math.hypot(e.x - fx, e.y - fy) for (fx, fy) in A["spots"]) > 14
+            chasing = [u for u in self.military() if e is not None and u.dist(e.x, e.y) <= 14]
+            over = e is None or (not chasing and t - A["t0"] > 8) or \
+                min(math.hypot(e.x - fx, e.y - fy) for (fx, fy) in A["spots"]) > 16
             founds = [o for o in s.mine if o.type == gs.HOUSE and o.hp <= 1.5 and
                       any(abs(o.x - fx) < 1.1 and abs(o.y - fy) < 1.1 for (fx, fy) in A["spots"])]
             if not over:
@@ -5132,6 +5136,29 @@ class Brain:
                             A["placed"][(fx, fy)] = t
                             A["n_orders"] += 1
                             self.say("ETRAP foundation at (%.0f,%.0f) placed again (shot down)" % (fx, fy))
+                # the player's cadence (15/10): two foundations first, then one more about every second ahead of
+                # the runner while it keeps running and the way 4 tiles ahead is not covered yet
+                if e is not None and A["n_orders"] < self.ETRAP_MAX and t - A.get("add_t", -99) >= 1.0 and self.can_afford(wood=30):
+                    h = hist.get(e.id, [])
+                    if len(h) >= 2 and h[-1][0] - h[0][0] >= 0.5:
+                        (t0, x0, y0), (t1, x1, y1) = h[0], h[-1]
+                        vx, vy = (x1 - x0) / (t1 - t0), (y1 - y0) / (t1 - t0)
+                        sp = math.hypot(vx, vy)
+                        if sp >= 0.8:
+                            hx, hy = vx / sp, vy / sp
+                            px, py = e.x + hx * self.ETRAP_AHEAD, e.y + hy * self.ETRAP_AHEAD
+                            if not any(math.hypot(px - fx, py - fy) < 1.6 for (fx, fy) in A["spots"]):
+                                spot = self._etrap_spot(px, py, hx, hy)
+                                v = self._etrap_builder(*spot) if spot else None
+                                if v is not None:
+                                    self.g.build([v], gs.HOUSE, spot[0], spot[1])
+                                    self._etrap_release(v)
+                                    A["spots"].append(spot)
+                                    A["placed"][spot] = t
+                                    A["n_orders"] += 1
+                                    A["add_t"] = t
+                                    self.say("ETRAP +1 foundation at (%.0f,%.0f) ahead of #%d running %.1f t/s (%d spots)" % (
+                                        spot[0], spot[1], e.id, sp, len(A["spots"])))
                 return
             if A.get("ended") is None:
                 A["ended"] = t
@@ -5242,6 +5269,7 @@ class Brain:
             if len(spots) < 2 or not self.can_afford(wood=30 * len(spots)):
                 R["spots<2"] = R.get("spots<2", 0) + 1
                 continue
+            spots = sorted(spots, key=lambda sp: math.hypot(sp[0] - px, sp[1] - py))[:2]   # (two first, the rest as it runs)
             v = self._etrap_builder(px, py)
             if v is None:
                 R["no villager"] = R.get("no villager", 0) + 1
@@ -5255,6 +5283,83 @@ class Brain:
             self.say("ETRAP #%d (%s) runs %.1f tiles/s from %d chasers into a %s: %d foundations across its way at (%.0f,%.0f)" % (
                 e.id, e.name, speed, len(chasers), "gap %d wide" % (left + right - 1) if left and right else "forest edge", len(spots), px, py))
             return
+
+    def _etrap_spot(self, px, py, hx, hy):
+        """A placeable 2x2 footprint on the predicted point, or shifted up to 2 tiles across the heading."""
+        lx, ly = -hy, hx
+        for k in (0, 1, -1, 2, -2):
+            cx, cy = px + lx * k, py + ly * k
+            fx, fy = math.floor(cx) + 1.0, math.floor(cy) + 1.0
+            if 1 <= fx < self.r.W - 1 and 1 <= fy < self.r.H - 1 and self.pm.passable(int(fx - 1), int(fy - 1)) and \
+                    self.pm.passable(int(fx), int(fy)) and self.g.can_place(self.me, gs.HOUSE, fx, fy):
+                return (fx, fy)
+        return None
+
+    def anti_trap(self):
+        """The counter to the player's trap (15/10): one of ours that is running (fleeing or ordered to move) but
+        has not moved for a second while an enemy foundation (1-2 hp) stands within 2 tiles hits that foundation
+        once and runs on. The player's traps held a camel still for 18 s and villagers died pressed against the
+        foundation without ever striking it."""
+        t = self.now()
+        P = self.__dict__.setdefault("_antitrap", {"pos": {}, "hit": {}})
+        s = self.s
+        founds = [o for o in getattr(s, "enemy_all", []) if o.kind == gs.KIND_BUILDING and 0 < o.hp <= 2.0]
+        if not founds:
+            P["pos"].clear()
+            return
+        for u in list(s.villagers) + list(self.military()):
+            lo = self.last_order.get(u.id)
+            running = (t < self.retreat_until.get(u.id, 0)) or (lo and t - lo[0] < 8 and lo[1] and lo[1][0] in ("m", "flee"))
+            if not running:
+                P["pos"].pop(u.id, None)
+                continue
+            prev = P["pos"].get(u.id)
+            P["pos"][u.id] = (t, u.x, u.y) if prev is None or math.hypot(u.x - prev[1], u.y - prev[2]) > 0.3 else prev
+            if prev is None or t - P["pos"][u.id][0] < 1.0 or t - P["hit"].get(u.id, -99) < 3.0:
+                continue
+            near = [o for o in founds if o.dist(u.x, u.y) <= 2.2]
+            if not near:
+                continue
+            o = min(near, key=lambda b: b.dist(u.x, u.y))
+            self.g.order([u], o)
+            self.mark([u], ("unstick", o.id))
+            P["hit"][u.id] = t
+            self.retreat_until[u.id] = 0                    # (the flee rule sends it on again next tick)
+            self.say("ANTITRAP %s #%d stood %.1f s against enemy foundation #%d at (%.0f,%.0f): hits it" % (
+                u.name, u.id, t - P["pos"][u.id][0], o.id, o.x, o.y))
+
+    def flee_goal(self, v, ex, ey, dist=8.0):
+        """Where a villager runs from raiders at (ex, ey) (the user, 15/10 evening): toward the TC unless the TC is
+        behind the raiders; otherwise the most open direction away from them - never along a forest or into a map
+        corner (the player's traps killed 8 of 9 villagers that ran into wood lines and corners)."""
+        tc = self.tc()
+        W, H = self.r.W, self.r.H
+        ax, ay = unit(v.x - ex, v.y - ey)
+        if tc is not None:
+            ux, uy = unit(tc.x - v.x, tc.y - v.y)
+            if ux * ax + uy * ay > -0.2 and v.dist(tc.x, tc.y) > 3:
+                return tc.x, tc.y
+        best, bs = None, -1e9
+        for k in range(12):
+            a = 2 * math.pi * k / 12
+            dx, dy = math.cos(a), math.sin(a)
+            away = dx * ax + dy * ay
+            if away < 0.2:
+                continue
+            run = 0
+            for r in range(1, int(dist) + 1):
+                x, y = int(v.x + dx * r), int(v.y + dy * r)
+                if not (1 <= x < W - 1 and 1 <= y < H - 1) or not self.pm.passable(x, y):
+                    break
+                run = r
+            gx, gy = v.x + dx * run, v.y + dy * run
+            free = sum(1 for i in range(-2, 3) for j in range(-2, 3)
+                       if 0 <= int(gx + i) < W and 0 <= int(gy + j) < H and self.pm.passable(int(gx + i), int(gy + j)))
+            edge = min(gx, gy, W - gx, H - gy)
+            score = run * 2 + free * 0.5 + away * 3 - (max(0.0, 8 - edge) * 2)
+            if score > bs:
+                bs, best = score, (gx, gy)
+        return best if best else (v.x + ax * dist, v.y + ay * dist)
 
     def _etrap_release(self, v):
         """The villager that placed the foundations goes straight back to its job (the foundation stays; measured
@@ -7245,10 +7350,8 @@ class Brain:
                     continue
                 ex = sum(e.x for e in near) / len(near)
                 ey = sum(e.y for e in near) / len(near)
-                ux, uy = unit(tc0.x - v.x, tc0.y - v.y)
-                if (ex - v.x) * ux + (ey - v.y) * uy > 0 and v.dist(tc0.x, tc0.y) > 6:
-                    ux, uy = unit(v.x - ex, v.y - ey)           # the TC is behind them: straight away
-                self.move([v], v.x + ux * 8, v.y + uy * 8)
+                gx, gy = self.flee_goal(v, ex, ey)            # (the TC, or the most open way away from them)
+                self.move([v], gx, gy)
                 self.retreat_until[v.id] = t + 8
                 self.mark([v], ("flee",))
             if t - getattr(self, "_flee_zone_say", 0) > 15:
@@ -7274,25 +7377,16 @@ class Brain:
                 if t >= self.retreat_until.get(victim.id, 0):
                     # the user: the villager hit runs AWAY from the TC, leading the soldier off the town;
                     # if that way goes through the soldier, it turns aside (away from the soldier)
-                    ux, uy = unit(victim.x - tc.x, victim.y - tc.y)
-                    if victim.dist(tc.x, tc.y) < 1:
-                        ux, uy = unit(victim.x - e.x, victim.y - e.y)
-                    ax, ay = unit(e.x - victim.x, e.y - victim.y)
-                    if ux * ax + uy * ay > 0.3:
-                        px, py = -uy, ux
-                        if px * ax + py * ay > 0:
-                            px, py = -px, -py
-                        ux, uy = unit(ux + 2 * px, uy + 2 * py)
-                    W, H = self.r.W, self.r.H
-                    gx = min(W - 2.0, max(1.0, victim.x + ux * 8))
-                    gy = min(H - 2.0, max(1.0, victim.y + uy * 8))
+                    # (15/10 evening: no longer led AWAY from the TC - that run went along forests and into corners,
+                    #  where the player's foundations killed 8 of 9 villagers; now the TC or the most open way)
+                    gx, gy = self.flee_goal(victim, e.x, e.y)
                     self.move([victim], gx, gy)
                     self.retreat_until[victim.id] = t + 6
                     self.mark([victim], ("flee",))
                     if t - getattr(self, "_flee_say", 0) > 10:
                         self._flee_say = t
-                        self.say("villager #%d attacked by %s #%d: runs away from the TC (leads it off the town)"
-                                 % (victim.id, e.name, e.id))
+                        self.say("villager #%d attacked by %s #%d: runs for the TC / open ground (%.0f,%.0f)"
+                                 % (victim.id, e.name, e.id, gx, gy))
             lone = e.type == gs.SCOUT and not any(o.id != e.id and o.dist(e.x, e.y) < 10 for o in enemy_mil)
             if (lone or early_fight) and e.id not in self.scout_hunts:
                 self.scout_hunts[e.id] = (e.x, e.y, t)
