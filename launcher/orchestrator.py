@@ -190,6 +190,7 @@ class Config:
         self.victory = "Conquest"
         self.pop_limit = 200
         self.reveal_map = False
+        self.cheats = False            # Allow Cheats (tests only)
         self.player_civ = 0            # 0 = random, 1..16
         self.ai_civs = [0] * 7
         self.ai_team_mode = "together"  # "together": player vs all AIs, "ffa": everyone alone
@@ -246,7 +247,7 @@ class Session:
         self.pool.ensure(cfg.num_ai)                  # normally already parked since the launcher opened
         lobby.write_settings(self.game_dir, map_size=cfg.map_size, map_type=cfg.map_type, age=cfg.age,
                              resources=cfg.resources, pop_limit=cfg.pop_limit, reveal_map=cfg.reveal_map,
-                             victory=getattr(cfg, "victory", "Conquest"))
+                             victory=getattr(cfg, "victory", "Conquest"), cheats=getattr(cfg, "cheats", False))
         lobby.reg_set(lobby.REG_SERVICE, "Internet TCP/IP Connection For DirectPlay")
         self.saved_name = lobby.reg_get(lobby.REG_NAME)
         if getattr(cfg, "player_name", ""):

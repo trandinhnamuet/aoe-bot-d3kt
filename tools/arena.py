@@ -30,6 +30,7 @@ ap.add_argument("--civs", default="", help="comma list of civ names for P1, P2, 
 ap.add_argument("--age", default="Default", help="starting age: Default, Tool Age, Bronze Age (micro tests)")
 ap.add_argument("--resources", default="Default", help="Default, Medium, High")
 ap.add_argument("--reveal", action="store_true", help="lobby Reveal Map (tests: every tile explored at the start)")
+ap.add_argument("--cheats", action="store_true", help="lobby Allow Cheats (staged tests: the bots type STEROIDS / WOODSTOCK)")
 ap.add_argument("--teams", default="", help="comma list of teams for P1, P2, ... (2v2: 1,1,2,2; empty = all alone)")
 ap.add_argument("--game", default=r"D:\Game\AoE-HD", help="game folder (AoE HD or the normal AOE1R)")
 ap.add_argument("--brain", default="new", choices=("old", "new"), help="new = brain.brain.NewBrain (one allocation table), old = d3kt.Brain")
@@ -144,6 +145,7 @@ def main():
     cfg.teams = [int(x) for x in args.teams.split(",") if x.strip()] if args.teams else []
     cfg.age, cfg.resources = args.age, args.resources
     cfg.reveal_map = bool(args.reveal)
+    cfg.cheats = bool(args.cheats)
     s = orchestrator.Session(r"D:\Game\AoESolo", cfg, log=L, status=lambda m: None, dll=DLL,
                              dplaunch=r"D:\Game\AoESolo\hook\dplaunch.exe", pool=pool)
     s.game_dir = GAME
@@ -190,6 +192,30 @@ def main():
             ths.append(th)
         games[allp[0]].set_speed(args.speed)
         L("game speed set to x%.1f" % args.speed)
+        grant = os.environ.get("AOESOLO_GRANT", "")
+        if grant:
+            # DO NOT USE (kept as a record): resources written into every game process at once - the match clock
+            # froze at the first food write (stage10, 15/10), as it does after a cheat command (stage8/9/11)
+            RES_I = {"food": 0, "wood": 1, "stone": 2, "gold": 3}
+            floors = {RES_I[k.strip()]: float(v) for k, v in (kv.split("=") for kv in grant.split(",") if "=" in kv)}
+            names = {v: k for k, v in RES_I.items()}
+
+            def pump():
+                g0 = games[allp[0]]
+                while not stop_flag[0]:
+                    try:
+                        if g0.world():
+                            for pn in allp:
+                                have = g0.resources(pn)
+                                for ri, floor in floors.items():
+                                    if have[ri] < floor / 3:
+                                        n = sum(1 for gg in games.values() if gg.set_resource(pn, ri, floor))
+                                        L("GRANT P%d %s %.0f -> %.0f in %d games" % (pn, names[ri], have[ri], floor, n))
+                    except Exception as e:  # noqa: BLE001
+                        L("GRANT error %r" % (e,))
+                    time.sleep(2)
+            threading.Thread(target=pump, daemon=True).start()
+            L("resource grant on: %s" % grant)
         # a match whose game runs slow (seen: x0.5 instead of x3) is not comparable: measure, give up
         w = games[allp[0]].world()
         g0, r0 = host.mem.u32(w + 4) or 0, time.time()
@@ -197,7 +223,7 @@ def main():
         g1 = host.mem.u32(games[allp[0]].world() + 4) or 0
         eff = (g1 - g0) / 1000.0 / (time.time() - r0)
         L("measured game speed x%.2f" % eff)
-        invalid[0] = eff < 0.75 * args.speed
+        invalid[0] = eff < 0.75 * args.speed and not os.environ.get("AOESOLO_KEEP_SLOW")   # (KEEP_SLOW: inspect a stalled game)
         if invalid[0]:
             L("SLOW GAME x%.2f: match invalid, stopping" % eff)
             stop_flag[0] = True

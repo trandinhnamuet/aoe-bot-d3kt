@@ -560,7 +560,8 @@ class Brain:
         if os.environ.get("AOESOLO_STAGE") == "chase":
             # (tests only: the staged chase - the economy runs, the army / wall / research programs are replaced)
             steps = (self.learn, self.update_pending, self.houses, self.town_center, self.villagers, self.run_tasks,
-                     self.farm_reset, self.hold_far_loads, self.stage_chase, self.e_trap, self.self_defence, self.watchdogs, self.stats)
+                     self.farm_reset, self.hold_far_loads, self.stage_cheats, self.stage_chase, self.e_trap, self.self_defence,
+                     self.watchdogs, self.stats)
         for step in steps:
             t1 = time.time()
             step()
@@ -4934,6 +4935,45 @@ class Brain:
         return False
 
     # ---------------------------------------------------------------- staged chase (tests only)
+    def cheat(self, code):
+        """A cheat word through the game's own chat-line parser (aoemem.Game.cheat): the parser submits the cheat
+        as a game command, so every game in the match applies it (no desync)."""
+        try:
+            r, was = self.g.cheat(code)
+            self.say("CHEAT %s: call %s, Allow Cheats byte %s" % (code, r, was))
+            return True
+        except Exception as e:  # noqa: BLE001
+            self.say("CHEAT %s failed: %r" % (code, e))
+            return False
+
+    def stage_cheats(self):
+        """AOESOLO_CHEATS=1: the staged setup in a minute instead of twelve - STEROIDS once (instant build and
+        train), WOODSTOCK / PEPPERONI PIZZA whenever wood / food are under 500 (every 6 s at most), and a check
+        that the first WOODSTOCK took (the lobby's Allow Cheats byte)."""
+        if not os.environ.get("AOESOLO_CHEATS"):
+            return
+        t = self.now()
+        C = self.__dict__.setdefault("_cheat", {"t": -99, "n": 0, "wood0": None, "ok": None})
+        if t < 2 or t - C["t"] < 6:
+            return
+        wood, food = self.res(gs.WOOD), self.res(gs.FOOD)
+        if C["wood0"] is not None and C["ok"] is None:
+            C["ok"] = wood >= C["wood0"] + 900
+            self.say("CHEAT check: wood %d -> %d: %s" % (C["wood0"], wood, "cheats work" if C["ok"] else "NO EFFECT (Allow Cheats off?)"))
+        if C["n"] == 0:
+            C["wood0"] = wood
+            self.cheat("WOODSTOCK")
+            if not os.environ.get("AOESOLO_NOSTEROIDS"):
+                self.cheat("STEROIDS")
+            C["n"], C["t"] = 1, t
+            return
+        if wood < 500:
+            self.cheat("WOODSTOCK")
+            C["t"] = t
+        elif food < 500:
+            self.cheat("PEPPERONI PIZZA")
+            C["t"] = t
+
     def stage_chase(self):
         """AOESOLO_STAGE=chase: P1 builds a market and 3 ranges, researches the Wheel, trains 10 chariot archers and
         sends them at the enemy's town, every one of them attacking the nearest enemy soldier; P2 trains 6 and keeps
@@ -4991,10 +5031,14 @@ class Brain:
                 self.g.research(mk[0], TECH_WHEEL)
                 S["wheel_t"] = t
         archers = [u for u in self.military() if u.type == gs.CHARIOT_ARCHER]
-        if wheel == 3 and len(archers) + S.get("queued", 0) < want:
-            for b in self.complete(gs.ARCHERY_RANGE):
-                if not self.r.producing(b) and self.can_afford(food=40, wood=70):
+        reserve = 160 if me_hunter else 0        # (wood kept for the trap: stage7 chased with 1-95 wood, no trap)
+        ranges = self.complete(gs.ARCHERY_RANGE)
+        n_now = len(archers) + sum(1 for b in ranges if self.r.producing(b))   # (stage12: 15 of 10 - those in training were not counted)
+        if wheel == 3 and n_now < want:
+            for b in ranges:
+                if n_now < want and not self.r.producing(b) and self.can_afford(food=40, wood=70 + reserve):
                     self.g.train(b, gs.CHARIOT_ARCHER)
+                    n_now += 1
         enemy = [e for e in self.s.enemy if e.kind == gs.KIND_COMBAT and e.cls != gs.CLS_VILLAGER and e.hp > 0]
         if t - S["say"] > 30:
             S["say"] = t
@@ -5122,7 +5166,16 @@ class Brain:
                 near = min(mil, key=lambda u: u.dist(e.x, e.y))
                 self.say("ETRAPHIST %d of ours attack enemies (%d targets); most-attacked #%d %s by %d, speed %.2f, nearest of ours %.1f, retreating-ours %d" % (
                     sum(cnt.values()), len(cnt), eid, e.name, n, sp, near.dist(e.x, e.y), sum(1 for u in mil if t < self.retreat_until.get(u.id, 0))))
-        if t - T["cool"] < 15 or not self.can_afford(wood=30 * 3 + 50):
+        R = T.setdefault("why", {})
+        if t - T.get("why_t", -99) > 10 and R:
+            T["why_t"] = t
+            self.say("ETRAPWHY " + ", ".join("%s %d" % kv for kv in sorted(R.items(), key=lambda kv: -kv[1])))
+            R.clear()
+        if t - T["cool"] < 15:
+            R["cooldown"] = R.get("cooldown", 0) + 1
+            return
+        if not self.can_afford(wood=30 * 3 + 50):
+            R["no wood"] = R.get("no wood", 0) + 1
             return
         for e in enemy:
             act_of = {}
@@ -5133,6 +5186,7 @@ class Brain:
                     chasers.append(u)             # (not while falling back: etrap1 trapped a camel our archers
                                                   #  were retreating from - "it ran away" because we did)
             if len(chasers) < 2:
+                R["chasers<2"] = R.get("chasers<2", 0) + 1
                 continue
             why = None
             h = hist.get(e.id, [])
@@ -5154,6 +5208,7 @@ class Brain:
             if why is None and not self.s.explored(px, py):
                 why = "ahead unexplored"
             if why is not None:
+                R[why.split()[0] if why.startswith(("history", "speed")) else why] = R.get(why.split()[0] if why.startswith(("history", "speed")) else why, 0) + 1
                 if t - T.get("dbg_t", -99) > 10:
                     T["dbg_t"] = t
                     self.say("ETRAPDBG #%d %s: %d chasers, %s (speed %.2f, dist %.1f)" % (e.id, e.name, len(chasers), why, speed, near.dist(e.x, e.y)))
@@ -5167,6 +5222,7 @@ class Brain:
                 if right == 0 and not self.pm.passable(int(px - lx * k), int(py - ly * k)):
                     right = k
             if (not left and not right) or (left and right and left + right - 1 > self.ETRAP_GAP):
+                R["open ground"] = R.get("open ground", 0) + 1
                 if t - T.get("dbg_t", -99) > 10:
                     T["dbg_t"] = t
                     self.say("ETRAPDBG #%d %s: %d chasers, open ground ahead (left %d right %d), speed %.2f" % (e.id, e.name, len(chasers), left, right, speed))
@@ -5184,9 +5240,11 @@ class Brain:
                     spots.append((fx, fy))
                 k += 2
             if len(spots) < 2 or not self.can_afford(wood=30 * len(spots)):
+                R["spots<2"] = R.get("spots<2", 0) + 1
                 continue
             v = self._etrap_builder(px, py)
             if v is None:
+                R["no villager"] = R.get("no villager", 0) + 1
                 continue
             placed = {}
             for (fx, fy) in spots:
@@ -7320,6 +7378,13 @@ class Brain:
                 start = min(range(len(edge)), key=lambda i: math.hypot(edge[i][0] - tc.x, edge[i][1] - tc.y))
                 x, y = edge[(start + k) % len(edge)]
                 self.move([c], x, y)
+
+
+if os.environ.get("AOESOLO_STAGE"):
+    # staged tests (tools/stage.py): a small town - the wood goes to the stage's buildings and soldiers (stage12:
+    # 45 villagers, 15 houses, the first archer at minute 9 and the chase began a minute before the end)
+    MAX_VILLAGERS = 14
+    WOOD_HARD_CAP = 10
 
 
 def run(game, me, enemies, log=print, stop=lambda: False, period=0.6, pop_limit=200):

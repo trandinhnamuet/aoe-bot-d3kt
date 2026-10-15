@@ -58,7 +58,7 @@ G_SCREEN_W = 0x1CAC        # int game resolution (width, height)
 
 # ---------------------------------------------------------------- settings file / registry
 def write_settings(game_dir, map_size="Medium", map_type="Highland", age="Default", resources="Default",
-                   pop_limit=50, reveal_map=False, fixed_positions=False, victory="Conquest"):
+                   pop_limit=50, reveal_map=False, fixed_positions=False, victory="Conquest", cheats=False):
     """Pre-seed the lobby settings ExWE.dll loads at startup (data/ex_tcf.cfg, 47 bytes)."""
     path = os.path.join(game_dir, "data", "ex_tcf.cfg")
     try:
@@ -76,8 +76,8 @@ def write_settings(game_dir, map_size="Medium", map_type="Highland", age="Defaul
     b[0x24] = RESOURCES[resources]
     b[0x29] = 0 if fixed_positions else 1         # 1 = random positions
     b[0x2A] = 1 if reveal_map else 0
-    b[0x2B] = 0                                   # full tech tree / cheats off
-    b[0x2C] = 0
+    b[0x2B] = 0                                   # full tech tree off
+    b[0x2C] = 1 if cheats else 0                  # Allow Cheats (the staged tests: STEROIDS / WOODSTOCK through chat)
     b[0x2E] = int(pop_limit)
     open(path, "wb").write(bytes(b))
 

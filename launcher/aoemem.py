@@ -19,6 +19,14 @@ FN_CMD_RESEARCH = 0x4EB7D0         # thiscall (building*, short tech_id)        
 FN_CMD_BUILD = 0x4EB870
 FN_PLAYER_RESIGN = 0x45F760        # thiscall RGE_Player::resign(comm player no, 0) -> command 0x0B
 FN_CMD_DELETE = 0x4EBBF0           # thiscall (object*)  type 0x6A: 8-byte command holding the object id (the Delete key)
+ADDR_GAME_PTR = 0x585E88          # TRIBE_Game*
+G_CHEATS_ALLOWED = 0x982          # byte in TRIBE_Game: the lobby's Allow Cheats (gates the chat-line parser only)
+FN_CHEAT_LINE = 0x5061E0          # thiscall TRIBE_Game::cheat_line(int player_idx, char* text) -> 1 when a cheat word
+FN_WORLD_CHEAT = 0x50EC90         # thiscall RGE_Game_World::cheat(short cheat_id): command 0x67 sub 6 (player id, cheat id)
+FN_CMD_INSTANT_BUILD = 0x4EBBB0   # thiscall RGE_Command::instant_build(short on): command 0x67 sub 4 (STEROIDS toggle)
+G_INSTANT_BUILD = 0x9A8           # int in TRIBE_Game: instant build on (the STEROIDS state)
+CHEAT_IDS = {"PEPPERONI PIZZA": 0x14, "COINAGE": 0x15, "QUARRY": 0x16, "WOODSTOCK": 0x17,
+             "DIEDIEDIE": 0x64, "HOME RUN": 0x66, "REVEAL MAP": 0xDC, "NO FOG": 0xE6}
 FN_CMD_SPEED = 0x4EBB80            # thiscall (float speed)  type 0x67 sub 1 (host sets the match speed)            # thiscall (units**, short n, short type, float x, float y) type 0x66
 
 # ---- world offsets
@@ -93,6 +101,12 @@ class Game:
         r = self.m.u32(p + P_RESOURCES)
         raw = self.m.read(r, 4 * n)
         return list(struct.unpack("<%df" % n, raw)) if raw else [0.0] * n
+
+    def set_resource(self, idx, res_i, value):
+        """Writes one resource of player idx in THIS process (tests: the arena writes every process the same)."""
+        p = self.player_ptr(idx)
+        r = self.m.u32(p + P_RESOURCES) if p else 0
+        return bool(r) and self.m.write(r + 4 * res_i, struct.pack("<f", float(value)))
 
     def research_states(self, idx):
         """[state per tech id] for a player: 0 locked, 1 available, 2 being researched, 3 done."""
@@ -178,6 +192,22 @@ class Game:
 
     def alloc(self, size):
         return self.h.call("cdecl", FN_CALLOC, 1, size)
+
+    def cheat(self, word):
+        """A cheat word as the game command the chat parser would submit (World::cheat with the cheat id, or the
+        instant-build toggle for STEROIDS). NOT USABLE on the AoE-HD build (15/10): the command is accepted but the
+        match clock stops for every game (stage8 x0.17, stage9 x0.37) - the HD patch's anti-cheat, most likely.
+        Tests use the arena's AOESOLO_GRANT (set_resource in every process) instead."""
+        game = self.m.u32(ADDR_GAME_PTR)
+        if not game:
+            return None, None
+        was = self.m.read(game + G_CHEATS_ALLOWED, 1)
+        if word == "STEROIDS":
+            on = self.m.u32(game + G_INSTANT_BUILD) or 0
+            r = self.h.call("thiscall", FN_CMD_INSTANT_BUILD, self.command_obj(), 0 if on else 1)
+        else:
+            r = self.h.call("thiscall", FN_WORLD_CHEAT, self.world(), CHEAT_IDS[word])
+        return r, (was[0] if was else None)
 
     def _alive(self, o, need_hp=True):
         """The object still lives at its pointer: the id at ptr+4 matches (a dead unit's memory is
