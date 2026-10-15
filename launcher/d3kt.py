@@ -62,6 +62,9 @@ HUNT_FROM_VILLAGER = 9   # the user: only from the 9th villager on are elephants
 MAX_VILLAGERS = 60      # the user: in Bronze villagers keep coming for the long game (farms feed them)
 ATTACK_GROUP = 2         # the user: two fighters go out at once; every new one joins them (non-stop pressure)
 MAX_STABLES = 6          # as many stables as the economy keeps busy: one per ~12 villagers
+WALL_FAR = 46            # the wall cut separates the town from the ring this far out (plan B, the user 15/10)
+WALL_WIDE_R = 22         # the wide wall: nothing this close to the TC is cut (the enclosure is at least that disc)
+WALL_WIDE_MAX = 24       # the wide wall is taken when it needs at most this many houses and at most 1.6 x the narrow one
 FLEE_R = 10.0            # villagers this close to an enemy soldier run for the TC before it reaches them
 FARM_RESET_S = 25.0      # the farm reset (Stop on farms + a villager) at most this often
 FARM_RESET_BELOW = 12.0  # ... once some farm's field (unit+0x44, at most 15 in this build) is below this
@@ -197,6 +200,18 @@ def bronze_unit(e):
 def unit(vx, vy):
     n = math.hypot(vx, vy) or 1.0
     return vx / n, vy / n
+
+
+_CUT_POOL = None
+
+
+def _cut_pool():
+    """One process pool for every bot's wall cuts (2 workers: the cuts of 4-7 bots queue up, the ticks never wait)."""
+    global _CUT_POOL
+    if _CUT_POOL is None:
+        import concurrent.futures
+        _CUT_POOL = concurrent.futures.ProcessPoolExecutor(max_workers=2)
+    return _CUT_POOL
 
 
 class Pending:
@@ -1445,27 +1460,29 @@ class Brain:
 
     # ================================================================ walls ("bo nhà")
     def walls(self):
-        """Re-plan the wall every 20 s: wide (whole town) if affordable and calm, else small."""
+        """The wall plan (the user, 15/10: "plan B"): the cheapest cut between the town and the far world - the
+        ring WALL_FAR tiles out, the map edge being a wall of its own - with forests, water, buildings and mines
+        free and a house tile at 100 + distance (+50 unexplored). No disc of radii: the enclosure is whatever the
+        terrain masses make cheapest, joined by the fewest houses. Planned every 20 s from 25 s (the barracks and
+        the market stand on its line), fixed at the Bronze click and re-cut only when the ground round the town
+        changes (a tree cut, a house built)."""
         t = self.now()
         tc = self.tc()
         jobs = self.__dict__.get("_cut_jobs", {})
-        stale = "wide" if getattr(self, "wall_fixed_R", None) is not None else "fixed"
-        for k in [k for k, j in jobs.items() if j["done"] and (k[0] == stale or k[0] == "fixed" and k[1] != getattr(self, "wall_fixed_R", None))]:
-            del jobs[k]                                   # (a cut nobody waits for any more)
         ready = any(j["done"] for j in jobs.values())     # (a cut finished: use it now, not 20 s later)
-        if not tc or (t - self.wall_t < 20 and not ready) or t < 25:
+        every = 20 if self.bronze_clicked else 40     # (a 46-tile cut is 2-4 s of Python sharing the GIL with the tick:
+                                                     #  the preliminary plan every 40 s - planb1: 135 slow ticks against 26)
+        if not tc or (t - self.wall_t < every and not ready) or t < 25:
             return
         self.wall_t = t
-        gate = None                                  # the user: no gate - a house is deleted to pass
         kc = self.wall_keep_clear()
         anchors_needed = [(p.x, p.y) for p in self.any_of(gs.STORAGE_PIT)[:1]] + \
                          [(g0.x, g0.y) for g0 in self.any_of(gs.GRANARY)[:1]]
-        best_wide = None
         refused = [(x0, y0, x0 + 2, y0 + 2) for (x0, y0), n in self.__dict__.get("slot_fail", {}).items() if n >= 2]
-        # never a ring hugging the TC (fix1v2: 7 houses round the TC itself, 0 tiles inside - the cut was
-        # cheapest there once the farm ring became dear): the TC and 3 tiles round it cannot be cut
+        # never a ring hugging the TC: the TC and 3 tiles round it cannot be cut
         tx0, ty0 = int(math.floor(tc.x - 1.5)), int(math.floor(tc.y - 1.5))
-        refused.append((tx0 - 3, ty0 - 3, tx0 + 6, ty0 + 6))
+        refused.append((tx0 - 5, ty0 - 5, tx0 + 8, ty0 + 8))   # (the TC + 2 tiles + the ring of 12 farms: never cut - the
+                                                               #  narrow wall holds at least that 13x13, the user 15/10)
         explored = lambda x, y: bool(self.s.explored(x, y))   # noqa: E731
         # our farms: a wall may lean on one already there (troops cannot cross a farm) but it falls fast -
         # a cut through farm tiles costs a little under a new house, the free terrain stays first (the user, 14/10)
@@ -1473,141 +1490,88 @@ class Brain:
         for f in self.any_of(gs.FARM):
             fx0, fy0, fx1, fy1 = pathing.footprint(f)
             soft |= {(xx, yy) for yy in range(fy0, fy1) for xx in range(fx0, fx1)}
-        # the user: the wall uses the terrain (forest, cliffs, water, ruins, the map edge) and houses only
-        # close the gaps - the cheapest cut between the town and the field, never a ring on a disc
-        # (the user walls 20-25 tiles out, along the forest lines and the map edge, recording 23:51: the
-        #  cheapest cut is often the far one through narrow forest gaps - every radius is tried and the
-        #  one with the fewest houses wins)
-        # (cost: a plan_cut is 0.2-0.6 s of Python; 3 radii + 2 small cuts every 20 s were 1.5 s a tick
-        #  with 4 bots - load1. Before the ring is chosen: ONE radius per call, round robin, the best of
-        #  the last three kept; once chosen: only that ring, and the small cuts never)
-        cands = self.__dict__.setdefault("_wall_cands", {})
-        if getattr(self, "wall_fixed_R", None) is None:
-            # (a pit / granary is enclosed only when it is inside the radius: a far pit at a remote wood
-            #  line or mine is an outpost - tech3: the first pit 37+ tiles out ruled every radius out and
-            #  no wide wall was ever planned again)
-            radii = [14, 26, 40]
-            pend = self.__dict__.get("_wall_R_pend")
-            if pend is None:
-                k = getattr(self, "_wall_rr", 0) % len(radii)
-                self._wall_rr = k + 1
-                R = radii[k]
-                anchors_R = [(ax, ay) for ax, ay in anchors_needed if math.hypot(ax - tc.x, ay - tc.y) <= R - 3]
-                self._wall_R_pend = pend = (R, anchors_R)
-            R, anchors_R = pend
-            p = self.cut_async(("wide", R), None, self.pm, (tc.x, tc.y), anchors_R, R, keep_clear=kc,
-                               uncuttable_rects=refused, explored=explored, soft=soft)
-            if p is not None:
-                self._wall_R_pend = None
-                # a pit / granary near home left outside counts like 8 houses (the user's 1v2: the 18-house
-                # r=14 pocket won against the r=26 cut that held the pit)
-                missing = sum(1 for (ax, ay) in anchors_needed
-                              if math.hypot(ax - tc.x, ay - tc.y) <= 30 and (ax, ay) not in anchors_R)
-                small_town = p.region_size < 250          # (a pocket: farms and berries left outside)
-                cands[R] = (len(p.slots) + 3 * len(p.leaks) + 8 * missing
-                            + (10 ** 5 if p.flow >= walling.INF or small_town else 0), p, t)
-            for R, c in list(cands.items()):
-                if t - c[2] > 80 or R not in radii:
-                    del cands[R]                     # (a stale candidate: the town changed since)
-            if cands:
-                best_wide = min(cands.values(), key=lambda c: c[0])[:2]
-        small = []
-        if getattr(self, "wall_fixed_R", None) is None:
-            # (the small rings are terrain-following cuts too: no ring of houses round the farms either)
-            for pit in self.any_of(gs.STORAGE_PIT)[:1]:
-                sp = walling.plan_cut(self.pm, (pit.x, pit.y), [], 6, keep_clear=[(pit.x, pit.y, 2.6)], explored=explored)
-                sp.mode = "small-wood"
-                small.append(sp)
-            farm_anchor = self.any_of(gs.GRANARY)[:1] or [tc]
-            for fa in farm_anchor:
-                sp = walling.plan_cut(self.pm, (fa.x, fa.y), [], 8, keep_clear=[(fa.x, fa.y, 1.5 + FARM_GAP + 3.2)], explored=explored)
-                sp.mode = "small-farm"
-                small.append(sp)
-        houses = len(self.any_of(gs.HOUSE))
-        pop_houses_left = max(0, (self.pop_limit - 4) // 4 - houses)
-        budget = pop_houses_left + max(0, int(self.res(gs.WOOD)) - 150) // 30
-        threat = self.enemy_threat()
-        wide_cost = best_wide[0] if best_wide else 10 ** 6
-        known = False
-        if best_wide:
-            # known = the ground along the cut (where the houses go and the terrain they lean on) is
-            # explored - the whole disc of a 40-tile ring never is
-            cut_tiles = getattr(best_wide[1], "cut", None) or []
-            ring = set()
-            for (xx, yy) in cut_tiles:
-                for dy in (-2, 0, 2):
-                    for dx in (-2, 0, 2):
-                        if 0 <= xx + dx < self.r.W and 0 <= yy + dy < self.r.H:
-                            ring.add((xx + dx, yy + dy))
-            tot = len(ring)
-            seen = sum(1 for (xx, yy) in ring if self.s.explored(xx, yy))
-            known = tot and seen >= 0.9 * tot
-            if t - getattr(self, "_known_say", -999) > 120:
-                self._known_say = t
-                bw = best_wide[1]
-                self.say("wall: wide candidate r=%d: %d houses, %d leaks, cut %d tiles, inside %d tiles, cost %d (budget %d), %d of %d tiles explored%s" % (
-                    bw.radius, len(bw.slots), len(bw.leaks), len(getattr(bw, "cut", [])), bw.region_size, best_wide[0], budget, seen, tot,
-                    "" if known else " - waits for the terrain"))
-        # once the wide wall is being built (3+ of its houses stand) it is kept whatever the threat or
-        # budget says: a plan that flips wide / small every 20 s never gets sealed
-        # the wide plan is decided ONCE (first time a leak-free ring is affordable and the ground is
-        # 60 % known) and its radius is kept for good: re-planned every 20 s only for the openings
-        # that are still uncovered (gate3: the plan flipped wide / small as costs changed, never sealed)
-        fixed_R = getattr(self, "wall_fixed_R", None)
-        all_tried = fixed_R is not None or len(self.__dict__.get("_wall_cands", {})) >= 3
-        if fixed_R is None and best_wide and known and all_tried and len(best_wide[1].leaks) <= 4 and wide_cost <= min(budget, 44):
-            self.wall_fixed_R = fixed_R = best_wide[1].radius
-            self.say("wall: wide ring r=%d chosen for good (%d houses)" % (fixed_R, len(best_wide[1].slots)))
-            if demo_dump.enabled():
-                bw = best_wide[1]
-                demo_dump.write(self, "wall", {
-                    "R": bw.radius, "slots": [list(sl) for sl in bw.slots], "cut": [list(c) for c in getattr(bw, "cut", [])],
-                    "leaks": [list(c) for c in bw.leaks], "inside": [list(c) for c in sorted(getattr(bw, "inside", []) or [])],
-                    "cands": {str(R_): [c[0], len(c[1].slots), len(c[1].leaks), c[1].region_size] for R_, c in cands.items()},
-                    "win": demo_dump.window(self, tc.x, tc.y, bw.radius + 4)})
-        if fixed_R is not None:
-            r0 = int(fixed_R) + 3
+        FAR = WALL_FAR
+        cx, cy = tc.x, tc.y
+        sink = lambda x, y: math.hypot(x + 0.5 - cx, y + 0.5 - cy) >= FAR - 3   # noqa: E731
+        anchors_R = [(ax, ay) for ax, ay in anchors_needed if math.hypot(ax - tc.x, ay - tc.y) <= FAR - 8]
+        fixed = self.bronze_clicked
+        prev = getattr(self, "_wall_same", None)
+        sig = None
+        if fixed:
+            r0 = int(FAR) + 3
             sig = (hash(bytes(self.pm.blk[max(0, int(tc.y) - r0) * self.pm.W:min(self.pm.H, int(tc.y) + r0 + 1) * self.pm.W])),
                    tuple(refused), int(sum(1 for (x, y) in getattr(self, "_wall_cut_tiles", ()) if self.s.explored(x, y))))
-            prev = getattr(self, "_wall_same", None)
-            if prev is not None and prev[0] == sig and prev[1].radius == fixed_R:
-                same = prev[1]                       # nothing changed round the town: the same plan
-            else:
-                anchors_R = [(ax, ay) for ax, ay in anchors_needed if math.hypot(ax - tc.x, ay - tc.y) <= fixed_R - 3]
-                res = self.cut_async(("fixed", fixed_R), sig, self.pm, (tc.x, tc.y), anchors_R, fixed_R, keep_clear=kc,
-                                     uncuttable_rects=refused, explored=explored, soft=soft)
-                if res is not None:
-                    same = res
-                    self._wall_same = (getattr(res, "job_tag", sig), same)
-                    self._wall_cut_tiles = list(getattr(same, "cut", []))
-                else:
-                    # (the new cut is being computed: the last plan of this ring meanwhile)
-                    same = prev[1] if prev is not None and prev[1].radius == fixed_R else (
-                        best_wide[1] if best_wide and best_wide[1].radius == fixed_R else None)
-                    if same is None:
-                        return
-            if same.flow >= walling.INF:
-                # the chosen ring cannot be closed any more (refused slots, new buildings): choose again
-                self.say("wall: ring r=%d cannot be closed any more - choosing again" % fixed_R)
-                self.wall_fixed_R = fixed_R = None
-                same = best_wide[1] if best_wide and best_wide[1].flow < walling.INF else same
-            mode, plans = "wide", [same]
-        elif best_wide and known and wide_cost <= min(budget, 34):
-            # (a threat no longer shrinks the plan to the small rings: enemy_threat() is true for the
-            #  rest of the game once any enemy reaches Bronze, and the small rings had 7 leaks - the
-            #  town was never sealed in arena gate1; a threat only speeds the filling up)
-            mode, plans = "wide", [best_wide[1]]
+        plan = None
+        if fixed and prev is not None and prev[0] == sig:
+            plan = prev[1]                               # nothing changed round the town: the same plan
         else:
-            mode, plans = "small", [p for p in small if p.slots]
+            # two plans, computed in turn: N (narrow, the cheapest cut) and W (wide: nothing within WALL_WIDE_R of the
+            # TC is cut, a house nearer the TC costs a little more, so the cut goes to the far masses). The wide one is
+            # taken when it is affordable (the user, 15/10: the working area matters more than the wood)
+            vis = bytes(self.s.vis) if getattr(self.s, "vis", None) else b""
+            common = dict(keep_clear=kc, uncuttable_rects=refused, soft=sorted(soft), explored_bytes=(vis, self.r.W),
+                          sink_far=(tc.x, tc.y, FAR - 3))
+            resN = self.cut_async(("N", 0), sig, self.pm, (tc.x, tc.y), anchors_R, FAR, **common)
+            if resN is not None:
+                self._wall_N = resN
+            resW = self.cut_async(("W", 0), sig, self.pm, (tc.x, tc.y), anchors_R, FAR, wide=(2, 40),
+                                  uncuttable_discs=[(tc.x, tc.y, WALL_WIDE_R)], **common)
+            if resW is not None:
+                self._wall_W = resW
+            pN, pW = getattr(self, "_wall_N", None), getattr(self, "_wall_W", None)
+            if pN is None:
+                plan = prev[1] if prev is not None else None
+            else:
+                plan = pN
+                if pW is not None and pW.flow < walling.INF and len(pW.leaks) <= len(pN.leaks) and \
+                        len(pW.slots) <= min(WALL_WIDE_MAX, int(1.6 * len(pN.slots)) + 2):
+                    plan = pW
+                plan.kind = "W" if plan is pW else "N"
+                if pW is not None and (resN is not None or resW is not None):
+                    # (remembered only once both plans are in: planb3 froze the N plan before W had been computed)
+                    self._wall_same = (sig, plan)
+                    self._wall_cut_tiles = list(getattr(plan, "cut", []))
+        if plan is None:
+            return
+        if plan.flow >= walling.INF:
+            if t - getattr(self, "_wall_inf_say", -999) > 120:
+                self._wall_inf_say = t
+                self.say("wall: no cut closes the town within %d tiles (unexplored all round?)" % FAR)
+            self.wall = []
+            return
+        if fixed and getattr(self, "wall_fixed_R", None) is None:
+            self.wall_fixed_R = FAR
+            pN, pW = getattr(self, "_wall_N", None), getattr(self, "_wall_W", None)
+            self.say("wall: plan %s fixed at the Bronze click: %d houses, %d leaks, %d tiles inside, cut %d tiles (N %s houses / %s inside, W %s / %s)" % (
+                getattr(plan, "kind", "?"), len(plan.slots), len(plan.leaks), plan.region_size, len(getattr(plan, "cut", [])),
+                len(pN.slots) if pN else "-", pN.region_size if pN else "-", len(pW.slots) if pW else "-", pW.region_size if pW else "-"))
+            if demo_dump.enabled():
+                demo_dump.write(self, "wall", {
+                    "R": FAR, "slots": [list(sl) for sl in plan.slots], "cut": [list(c) for c in getattr(plan, "cut", [])],
+                    "leaks": [list(c) for c in plan.leaks], "inside": [list(c) for c in sorted(getattr(plan, "inside", []) or [])],
+                    "cands": {}, "win": demo_dump.window(self, tc.x, tc.y, FAR + 2)})
+        if t - getattr(self, "_known_say", -999) > 120:
+            self._known_say = t
+            cut_tiles = getattr(plan, "cut", None) or []
+            seen = sum(1 for (xx, yy) in cut_tiles if self.s.explored(xx, yy))
+            self.say("wall: plan %s%s: %d houses, %d leaks, %d tiles inside, %d of %d cut tiles explored" % (
+                getattr(plan, "kind", "?"), " (fixed)" if fixed else "", len(plan.slots), len(plan.leaks), plan.region_size, seen, len(cut_tiles)))
+        mode = "wide"
         if mode != self.wall_mode:
-            self.say("wall plan -> %s (wide cost %s, budget %d, threat %s) %s" % (
-                mode, wide_cost if best_wide else "-", budget, threat, plans))
+            self.say("wall plan -> %s %s" % (mode, [plan]))
         self.wall_mode = mode
-        self.wall = plans
+        self.wall = [plan]
         rects = self.__dict__.setdefault("wall_rects", set())
-        for p in plans:
-            for (x0, y0, sz) in p.slots:
-                rects.add((x0, y0, sz))                  # every footprint ever planned: the wall houses
+        for (x0, y0, sz) in plan.slots:
+            rects.add((x0, y0, sz))                      # every footprint ever planned: the wall houses
+
+    def wall_reach(self):
+        """The equivalent radius of the planned enclosure (the military cluster leans on it)."""
+        for p in self.wall or []:
+            n = getattr(p, "region_size", 0) or len(getattr(p, "inside", ()) or ())
+            if n:
+                return max(12.0, min(40.0, math.sqrt(n / math.pi) + 3))
+        return 26.0
 
     def wall_shot(self, when):
         """Tests only (AOESOLO_DEMO_DIR): what the bot sees round its town and the wall plans it would make now,
@@ -1635,6 +1599,23 @@ class Brain:
                                  "leaks": [list(c) for c in p.leaks], "inside": [list(c) for c in sorted(getattr(p, "inside", []) or [])],
                                  "soft_cut": [list(c) for c in getattr(p, "soft_cut", [])], "flow": p.flow,
                                  "cost": len(p.slots) + 3 * len(p.leaks), "region": p.region_size}
+            cx, cy = tc.x, tc.y
+            pB = walling.plan_cut(self.pm.copy(), (tc.x, tc.y), [], WALL_FAR, keep_clear=kc, uncuttable_rects=refused,
+                                  explored=explored, soft=soft,
+                                  sink=lambda x, y: math.hypot(x + 0.5 - cx, y + 0.5 - cy) >= WALL_FAR - 3)
+            plans["B"] = {"slots": [list(sl) for sl in pB.slots], "cut": [list(c) for c in getattr(pB, "cut", [])],
+                          "leaks": [list(c) for c in pB.leaks], "inside": [list(c) for c in sorted(getattr(pB, "inside", []) or [])],
+                          "soft_cut": [list(c) for c in getattr(pB, "soft_cut", [])], "flow": pB.flow,
+                          "cost": len(pB.slots) + 3 * len(pB.leaks), "region": pB.region_size}
+            refN = refused + [(tx0 - 5, ty0 - 5, tx0 + 8, ty0 + 8)]
+            for key, hc, discs in (("N", None, []), ("W", lambda x, y, d: 100 + 2 * max(0, 40 - d), [(tc.x, tc.y, WALL_WIDE_R)])):
+                pk = walling.plan_cut(self.pm.copy(), (tc.x, tc.y), [], WALL_FAR, keep_clear=kc, uncuttable_rects=refN,
+                                      explored=explored, soft=soft, house_cost=hc, uncuttable_discs=discs,
+                                      sink=lambda x, y: math.hypot(x + 0.5 - cx, y + 0.5 - cy) >= WALL_FAR - 3)
+                plans[key] = {"slots": [list(sl) for sl in pk.slots], "cut": [list(c) for c in getattr(pk, "cut", [])],
+                              "leaks": [list(c) for c in pk.leaks], "inside": [list(c) for c in sorted(getattr(pk, "inside", []) or [])],
+                              "soft_cut": [list(c) for c in getattr(pk, "soft_cut", [])], "flow": pk.flow,
+                              "cost": len(pk.slots) + 3 * len(pk.leaks), "region": pk.region_size}
             fixed = getattr(self, "wall_fixed_R", None)
             demo_dump.write(self, "wallshot", {
                 "when": when, "tc": [tc.x, tc.y], "fixed_R": fixed, "houses": len(self.any_of(gs.HOUSE)),
@@ -1663,20 +1644,21 @@ class Brain:
         if any(not o["done"] for o in J.values()):
             return None
         j = J[key] = {"done": False, "res": None, "tag": tag, "err": None}
-        work = pm.copy()                                   # (the map as it is now: the tick keeps changing pm)
+        # a worker PROCESS, not a thread: a 46-tile cut is 2-4 s of pure Python and a thread shares the GIL with the
+        # tick (planb3: 365 slow ticks, 8 s each, three towns never reached Bronze)
+        try:
+            fut = _cut_pool().submit(walling.cut_job, pm.W, pm.H, bytes(pm.blk), a, kw)
+        except Exception as e:  # noqa: BLE001
+            j["err"], j["done"] = e, True
+            return None
 
-        def run(j=j):
+        def done_cb(f, j=j):
             try:
-                j["res"] = walling.plan_cut(work, *a, **kw)
+                j["res"] = f.result()
             except Exception as e:  # noqa: BLE001
                 j["err"] = e
             j["done"] = True
-        old = threading.stack_size()
-        try:
-            threading.stack_size(32 * 1024 * 1024)       # (the max-flow DFS recurses along the cut's paths)
-            threading.Thread(target=run, daemon=True, name="wallcut-%d" % self.me).start()
-        finally:
-            threading.stack_size(old)
+        fut.add_done_callback(done_cb)
         return None
 
     # ---------------------------------------------------------------- the sealed wall's gate
@@ -2098,7 +2080,9 @@ class Brain:
         farms_after = 0
         if self.bronze_clicked:
             wild = sum(self.site_cap.get(k, 0) for (k, _x, _y, _st) in self.sites) + self.berry_capacity()
-            farms_after = max(0, min(8, 12 - wild) - len(self.any_of(gs.FARM)) - len(self.pending_of(gs.FARM)))
+            # the wall waits for the first 4 farms only (the user: 4-8 farms first, by the free villagers) - planb2: with
+            # all 8 the wall waited for 600 wood and 3 of 4 towns were still open at minute 24
+            farms_after = max(0, min(4, min(8, 12 - wild)) - len(self.any_of(gs.FARM)) - len(self.pending_of(gs.FARM)))
         tc0 = tc
         raid_near = any(e.dist(tc0.x, tc0.y) < 30 for e in (getattr(self, "_raiders", None) or ()))
         wall_fill = (self.wall and self.res(gs.WOOD) >= 60 and self.now() - self.last_wall_house > 8
@@ -5426,7 +5410,7 @@ class Brain:
                     best_d, best_n = (dx, dy), n
             ex, ey = best_d
         inside = self.wall_inside_tiles()
-        R = getattr(self, "wall_fixed_R", None) or 26
+        R = self.wall_reach()
         kc = self.keep_clear()
         best = None
         # first ahead (+-60 deg, up to 17 tiles beyond the ring), then - in the same search - any side and
@@ -5506,7 +5490,7 @@ class Brain:
         if hub is None:
             return None
         inside = self.wall_inside_tiles()
-        R = getattr(self, "wall_fixed_R", None) or 26
+        R = self.wall_reach()
         cands = self._hub_footprints(btype, hub[0], hub[1], 14 if wide else 9, inside, self.keep_clear(), R)
         spot = self.place_checked(btype, cands)
         miss = self.__dict__.get("_hub_miss", 0) + 1 if spot is None else 0

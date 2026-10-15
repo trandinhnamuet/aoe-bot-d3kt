@@ -346,7 +346,7 @@ def _add_edge(adj, u, v, cap):
 SOFT_CAP = 80                                         # a farm tile on the cut (a house tile is 100 + distance)
 
 
-def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None, soft=None, sink=None):
+def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None, soft=None, sink=None, house_cost=None):
     """The cheapest set of tiles whose blocking separates the TC (and anchors) from every passable
     tile rmax or more from the TC, given the terrain / buildings in `work`. Tiles in `uncuttable`
     (a function (x, y) -> bool) and unexplored tiles can be walked through but never built on.
@@ -393,7 +393,7 @@ def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None,
                 _add_edge(adj, 2 * k + 1, T, INF)
             continue
         cuttable = not uncuttable(xx, yy)
-        cap = 100 + int(d) + (50 if explored is not None and not explored(xx, yy) else 0)
+        cap = (int(house_cost(xx, yy, d)) if house_cost is not None else 100 + int(d))             + (50 if explored is not None and not explored(xx, yy) else 0)
         if dear is not None and dear(xx, yy):
             cap += 300                                   # the farm ring: cut only when nothing else goes
         _add_edge(adj, 2 * k, 2 * k + 1, cap if cuttable else INF)
@@ -446,8 +446,63 @@ def _inside_set(work, tc, rmax):
     return seen
 
 
+def cut_job(W, H, blk, args, kw):
+    """plan_cut in a worker process (d3kt.cut_async): the map as bytes, picklable options only, a 32 MB stack for
+    the max-flow DFS. Returns the Plan (picklable)."""
+    import threading
+    pm = PassMapBytes(W, H, blk)
+    out = {}
+
+    def run():
+        try:
+            out["res"] = plan_cut(pm, *args, **kw)
+        except Exception as e:  # noqa: BLE001
+            out["err"] = repr(e)
+    old = threading.stack_size()
+    try:
+        threading.stack_size(32 * 1024 * 1024)
+        th = threading.Thread(target=run)
+        th.start()
+        th.join()
+    finally:
+        threading.stack_size(old)
+    if "err" in out:
+        raise RuntimeError(out["err"])
+    return out["res"]
+
+
+class PassMapBytes:
+    """A passability grid from bytes (the worker process's copy of pathing.PassMap)."""
+
+    def __init__(self, W, H, blk):
+        self.W, self.H, self.blk = W, H, bytearray(blk)
+
+    def passable(self, x, y):
+        return 0 <= x < self.W and 0 <= y < self.H and not self.blk[y * self.W + x]
+
+    def copy(self):
+        return PassMapBytes(self.W, self.H, self.blk)
+
+    def block_rect(self, x0, y0, x1, y1, blk=None):
+        blk = self.blk if blk is None else blk
+        for yy in range(max(0, y0), min(self.H, y1)):
+            for xx in range(max(0, x0), min(self.W, x1)):
+                blk[yy * self.W + xx] = 1
+
+
 def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored=None, size=2, max_slots=60,
-             rounds=6, soft=(), sink=None):
+             rounds=6, soft=(), sink=None, house_cost=None, uncuttable_discs=(), explored_bytes=None, sink_far=None,
+             wide=None):
+    # picklable forms of the callables (the worker process gets no lambdas)
+    if explored is None and explored_bytes is not None:
+        vis, VW = explored_bytes
+        explored = lambda x, y: 0 <= x < VW and 0 <= y and y * VW + x < len(vis) and vis[y * VW + x] != 255   # noqa: E731
+    if sink is None and sink_far is not None:
+        sx, sy, sr = sink_far
+        sink = lambda x, y: math.hypot(x + 0.5 - sx, y + 0.5 - sy) >= sr   # noqa: E731
+    if house_cost is None and wide is not None:
+        slope, d0 = wide
+        house_cost = lambda x, y, d: 100 + slope * max(0, d0 - d)   # noqa: E731
     """The terrain-following enclosure: minimum-cut tiles between the town and the field, covered by
     size x size footprints; re-cut with the footprints in place until the town is sealed.
     Returns a Plan (mode 'wide'): openings = cut tiles still uncovered, slots = footprints to build,
@@ -458,6 +513,9 @@ def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored
     def uncuttable(x, y):
         for (x0, y0, x1, y1) in uncuttable_rects:
             if x0 <= x < x1 and y0 <= y < y1:
+                return True
+        for (cx_, cy_, r_) in uncuttable_discs:        # (the wide wall: the disc round the TC is never cut)
+            if (x + 0.5 - cx_) ** 2 + (y + 0.5 - cy_) ** 2 < r_ * r_:
                 return True
         return False
 
@@ -504,7 +562,8 @@ def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored
     slots, leaks, all_cut, all_soft = [], [], [], []
     flow = 0
     for _round in range(rounds):
-        cut, flow = min_cut_tiles(work, tc, anchors, rmax, uncuttable_full, explored, dear=in_keep_clear, soft=soft, sink=sink)
+        cut, flow = min_cut_tiles(work, tc, anchors, rmax, uncuttable_full, explored, dear=in_keep_clear, soft=soft, sink=sink,
+                                  house_cost=house_cost)
         if flow >= INF:
             break
         p_soft = [t for t in cut if t in soft]
