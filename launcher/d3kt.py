@@ -511,6 +511,11 @@ class Brain:
                 self.oracle_diag(os.environ["AOESOLO_ORACLE"])
             except Exception as e:  # noqa: BLE001
                 self.say("ORACLE error: %r" % (e,))
+        if os.environ.get("AOESOLO_ETEST") and tc_ is not None:
+            try:
+                self.e_test()
+            except Exception as e:  # noqa: BLE001
+                self.say("ETEST error: %r" % (e,))
         if os.environ.get("AOESOLO_SQUEEZETEST") and tc_ is not None:
             try:
                 self.squeeze_test(os.environ["AOESOLO_SQUEEZETEST"])
@@ -550,7 +555,7 @@ class Brain:
         times = []
         for step in (self.learn, self.check_enemy_violations, self.update_pending, self.walls, self.houses,
                      self.town_center, self.villagers, self.run_tasks, self.farm_reset, self.hold_far_loads, self.gate_keeper, self.wall_leak_check, self.wall_repair, self.buildings_program, self.stables,
-                     self.research_plan, self.army, self.artifacts, self.self_defence, self.lion_defence, self.watchdogs, self.stats,
+                     self.research_plan, self.army, self.e_trap, self.artifacts, self.self_defence, self.lion_defence, self.watchdogs, self.stats,
                      self.food_audit):
             t1 = time.time()
             step()
@@ -4399,6 +4404,63 @@ class Brain:
         os.makedirs(outdir, exist_ok=True)
         json.dump(D["out"], open(os.path.join(outdir, "P%d_oracle.json" % self.me), "w"))
 
+    def e_test(self):
+        """Tests only (AOESOLO_ETEST): the house-foundation trap's facts. A villager 10+ tiles away is ordered to
+        build a house: when does the foundation appear? Then the foundation is deleted: how much wood comes back?"""
+        D = self.__dict__.setdefault("_etest", {"phase": "wait", "n": 0})
+        t = self.now()
+        if D["phase"] == "wait":
+            if t < 90 + 40 * D["n"] or D["n"] >= 4 or not self.can_afford(wood=40):
+                return
+            tc = self.tc()
+            vs = sorted(self.s.villagers, key=lambda v: -v.dist(tc.x, tc.y))
+            if not vs:
+                return
+            v = vs[0]
+            spot = None
+            for dx in range(-12, 13):
+                for dy in range(-12, 13):
+                    x0, y0 = int(tc.x + dx), int(tc.y + dy)
+                    if 6 <= math.hypot(dx, dy) <= 12 and self.footprint_ok(gs.HOUSE, x0, y0) and                             math.hypot(x0 + 1 - v.x, y0 + 1 - v.y) >= 10 and self.g.can_place(self.me, gs.HOUSE, x0 + 1.0, y0 + 1.0):
+                        spot = (x0 + 1.0, y0 + 1.0)
+                        break
+                if spot:
+                    break
+            if not spot:
+                return
+            D.update(phase="placed", t0=t, wall0=time.time(), spot=spot, vid=v.id, wood0=self.res(gs.WOOD), vdist=v.dist(*spot), seen=None)
+            self.g.build([v], gs.HOUSE, spot[0], spot[1])
+            self.say("ETEST %d: build ordered at (%.1f,%.1f), villager #%d %.1f tiles away, wood %d" % (D["n"], spot[0], spot[1], v.id, D["vdist"], D["wood0"]))
+            return
+        spot = D["spot"]
+        found = [o for o in self.s.mine if o.type == gs.HOUSE and abs(o.x - spot[0]) < 1.1 and abs(o.y - spot[1]) < 1.1]
+        if D["phase"] == "placed":
+            if found and D["seen"] is None:
+                D["seen"] = t
+                D["obj"] = found[0].id
+                v = self._by_id.get(D["vid"])
+                self.say("ETEST %d: foundation exists after %.2f s game / %.2f s real (villager %.1f tiles away, hp %.0f), wood %d (was %d)" % (
+                    D["n"], t - D["t0"], time.time() - D["wall0"], v.dist(*spot) if v else -1, found[0].hp, self.res(gs.WOOD), D["wood0"]))
+                # the villager goes back to work at once: does the foundation stay?
+                if v is not None:
+                    self.g.move([v], v.x, v.y)
+            if D["seen"] is not None and t - D["seen"] >= 6:
+                if found:
+                    D.update(phase="deleted", t1=t, wood1=self.res(gs.WOOD), hp1=found[0].hp)
+                    self.g.delete(found[0])
+                    self.say("ETEST %d: foundation still there after 6 s (hp %.0f), deleting; wood %d" % (D["n"], found[0].hp, D["wood1"]))
+                else:
+                    self.say("ETEST %d: foundation GONE within 6 s of the villager being sent back" % D["n"])
+                    D.update(phase="wait", n=D["n"] + 1)
+            elif t - D["t0"] > 15 and D["seen"] is None:
+                self.say("ETEST %d: no foundation 15 s after the order (refused?)" % D["n"])
+                D.update(phase="wait", n=D["n"] + 1)
+        elif D["phase"] == "deleted":
+            if not found or t - D["t1"] > 4:
+                self.say("ETEST %d: after delete: foundation %s, wood %d (before delete %d, before order %d) -> refund %d" % (
+                    D["n"], "gone" if not found else "STILL THERE", self.res(gs.WOOD), D["wood1"], D["wood0"], self.res(gs.WOOD) - D["wood1"]))
+                D.update(phase="wait", n=D["n"] + 1)
+
     def squeeze_test(self, outdir):
         """Tests only: can a villager slip diagonally between two obstacles that touch at a corner? It is
         taken to the inside tile of a corner squeeze the leak check found, then sent to the outside tile next
@@ -4865,6 +4927,176 @@ class Brain:
             if math.hypot(x0 + k * dx - lx, y0 + k * dy - ly) < LION_SAFE:
                 return True
         return False
+
+    # ---------------------------------------------------------------- the foundation trap ("vay E")
+    ETRAP_AHEAD = 4.0        # tiles ahead of the running enemy the line of foundations goes (order lag ~0.6 s real)
+    ETRAP_MAX = 6            # foundations per trap
+    ETRAP_GAP = 8            # a gap this wide (tiles, free width across the heading) or narrower is closed fully
+    ETRAP_DELETE_AFTER = 20  # s after the chase ends the foundations are deleted (the user: take the wood back)
+
+    def e_trap(self):
+        """While 2+ of ours chase an enemy unit that runs away, foundations are placed across its predicted way
+        when that way is a gap between obstacles or runs along one (the user, 15/10). Foundations shot down are
+        placed again while the chase lasts; 20 s after it ends they are deleted."""
+        t = self.now()
+        T = self.__dict__.setdefault("_etrap", {"hist": {}, "active": None, "cool": -99.0})
+        s = self.s
+        enemy = [e for e in s.enemy if e.kind == gs.KIND_COMBAT and e.cls != gs.CLS_VILLAGER and e.hp > 0]
+        # positions of the enemy soldiers over the last 1.5 s: their heading and speed
+        hist = T["hist"]
+        for e in enemy:
+            h = hist.setdefault(e.id, [])
+            h.append((t, e.x, e.y))
+            del h[:-8]
+        for eid in [k for k, h in hist.items() if h and t - h[-1][0] > 3.0]:
+            del hist[eid]                                # (kept 3 s through the fog: etrap4, a runner in and out of
+                                                         #  sight never had 3 samples)
+        A = T["active"]
+        mine = {o.ptr: o for o in s.mine}
+        if A is not None:
+            e = next((x for x in enemy if x.id == A["eid"]), None)
+            # (the chase goes on while any of ours is within 10 tiles of it: archers re-target every shot, so
+            #  "has an attack order on it" ended the first trap 4 s in - etrap1)
+            chasing = [u for u in self.military() if e is not None and u.dist(e.x, e.y) <= 10]
+            over = e is None or not chasing or min(math.hypot(e.x - fx, e.y - fy) for (fx, fy) in A["spots"]) > 14
+            founds = [o for o in s.mine if o.type == gs.HOUSE and o.hp <= 1.5 and
+                      any(abs(o.x - fx) < 1.1 and abs(o.y - fy) < 1.1 for (fx, fy) in A["spots"])]
+            if not over:
+                # a foundation shot down: again, at once
+                for (fx, fy) in A["spots"]:
+                    if not any(abs(o.x - fx) < 1.1 and abs(o.y - fy) < 1.1 for o in founds) and t - A["placed"].get((fx, fy), -99) > 2.5 \
+                            and self.can_afford(wood=30):
+                        v = self._etrap_builder(fx, fy)
+                        if v is not None and self.g.can_place(self.me, gs.HOUSE, fx, fy):
+                            self.g.build([v], gs.HOUSE, fx, fy)
+                            self._etrap_release(v)
+                            A["placed"][(fx, fy)] = t
+                            A["n_orders"] += 1
+                            self.say("ETRAP foundation at (%.0f,%.0f) placed again (shot down)" % (fx, fy))
+                return
+            if A.get("ended") is None:
+                A["ended"] = t
+                self.say("ETRAP chase of #%d over (%s): %d foundations, %d orders, deleted in %d s" % (
+                    A["eid"], "dead" if e is None else ("nobody chasing" if not chasing else "ran off"), len(founds), A["n_orders"], self.ETRAP_DELETE_AFTER))
+            if t - A["ended"] >= self.ETRAP_DELETE_AFTER or not founds:
+                for o in founds:
+                    try:
+                        self.g.delete(o)
+                    except Exception:  # noqa: BLE001
+                        pass
+                T["active"] = None
+                T["cool"] = t
+            return
+        mil = self.military()
+        if os.environ.get("AOESOLO_ETRAPHIST") and t - T.get("hist_t", -99) > 10 and enemy and mil:
+            T["hist_t"] = t
+            cnt = {}
+            for u in mil:
+                a = self.r.action(u)
+                if a and a[1]:
+                    for e in enemy:
+                        if a[1] == e.ptr:
+                            cnt[e.id] = cnt.get(e.id, 0) + 1
+            if cnt:
+                eid, n = max(cnt.items(), key=lambda kv: kv[1])
+                e = next(x for x in enemy if x.id == eid)
+                h = hist.get(eid, [])
+                sp = 0.0
+                if len(h) >= 2 and h[-1][0] > h[0][0]:
+                    sp = math.hypot(h[-1][1] - h[0][1], h[-1][2] - h[0][2]) / (h[-1][0] - h[0][0])
+                near = min(mil, key=lambda u: u.dist(e.x, e.y))
+                self.say("ETRAPHIST %d of ours attack enemies (%d targets); most-attacked #%d %s by %d, speed %.2f, nearest of ours %.1f, retreating-ours %d" % (
+                    sum(cnt.values()), len(cnt), eid, e.name, n, sp, near.dist(e.x, e.y), sum(1 for u in mil if t < self.retreat_until.get(u.id, 0))))
+        if t - T["cool"] < 15 or not self.can_afford(wood=30 * 3 + 50):
+            return
+        for e in enemy:
+            act_of = {}
+            chasers = []
+            for u in mil:
+                a = self.r.action(u)
+                if a and a[1] == e.ptr and u.dist(e.x, e.y) <= 12 and t >= self.retreat_until.get(u.id, 0)                         and not self.recent(u.id, ("fall",), within=8):
+                    chasers.append(u)             # (not while falling back: etrap1 trapped a camel our archers
+                                                  #  were retreating from - "it ran away" because we did)
+            if len(chasers) < 2:
+                continue
+            why = None
+            h = hist.get(e.id, [])
+            if len(h) < 2 or h[-1][0] - h[0][0] < 0.5:
+                why = "history %d" % len(h)
+            (t0, x0, y0), (t1, x1, y1) = (h[0], h[-1]) if len(h) >= 2 else ((t, e.x, e.y), (t, e.x, e.y))
+            vx, vy = (x1 - x0) / max(0.1, t1 - t0), (y1 - y0) / max(0.1, t1 - t0)
+            speed = math.hypot(vx, vy)
+            if why is None and speed < 0.8:
+                why = "speed %.2f" % speed
+            hx, hy = (vx / speed, vy / speed) if speed > 0 else (0.0, 0.0)
+            near = min(chasers, key=lambda u: u.dist(e.x, e.y))
+            if why is None and (e.x - near.x) * hx + (e.y - near.y) * hy < 0:
+                why = "not away"
+            px, py = e.x + hx * self.ETRAP_AHEAD, e.y + hy * self.ETRAP_AHEAD
+            if why is None and not self.s.explored(px, py):
+                why = "ahead unexplored"
+            if why is not None:
+                if t - T.get("dbg_t", -99) > 10:
+                    T["dbg_t"] = t
+                    self.say("ETRAPDBG #%d %s: %d chasers, %s (speed %.2f, dist %.1f)" % (e.id, e.name, len(chasers), why, speed, near.dist(e.x, e.y)))
+                continue
+            # free width across the heading at P: the first obstacle to the left and to the right
+            lx, ly = -hy, hx
+            left = right = 0
+            for k in range(1, 7):
+                if left == 0 and not self.pm.passable(int(px + lx * k), int(py + ly * k)):
+                    left = k
+                if right == 0 and not self.pm.passable(int(px - lx * k), int(py - ly * k)):
+                    right = k
+            if (not left and not right) or (left and right and left + right - 1 > self.ETRAP_GAP):
+                if t - T.get("dbg_t", -99) > 10:
+                    T["dbg_t"] = t
+                    self.say("ETRAPDBG #%d %s: %d chasers, open ground ahead (left %d right %d), speed %.2f" % (e.id, e.name, len(chasers), left, right, speed))
+                continue
+            # the line of 2x2 footprints across: from the left obstacle to the right one (or 6 tiles into the open)
+            spots = []
+            kl = (left - 1) if left else 6
+            kr = (right - 1) if right else 6
+            k = -kr + 1
+            while k <= kl - 1 and len(spots) < self.ETRAP_MAX:
+                cx, cy = px + lx * k, py + ly * k
+                fx, fy = math.floor(cx) + 1.0, math.floor(cy) + 1.0   # the 2x2 centre
+                if self.pm.passable(int(fx - 1), int(fy - 1)) and self.pm.passable(int(fx), int(fy)) and \
+                        self.g.can_place(self.me, gs.HOUSE, fx, fy):
+                    spots.append((fx, fy))
+                k += 2
+            if len(spots) < 2 or not self.can_afford(wood=30 * len(spots)):
+                continue
+            v = self._etrap_builder(px, py)
+            if v is None:
+                continue
+            placed = {}
+            for (fx, fy) in spots:
+                self.g.build([v], gs.HOUSE, fx, fy)
+                placed[(fx, fy)] = t
+            self._etrap_release(v)
+            T["active"] = {"eid": e.id, "eptr": e.ptr, "spots": spots, "placed": placed, "n_orders": len(spots), "t0": t}
+            self.say("ETRAP #%d (%s) runs %.1f tiles/s from %d chasers into a %s: %d foundations across its way at (%.0f,%.0f)" % (
+                e.id, e.name, speed, len(chasers), "gap %d wide" % (left + right - 1) if left and right else "forest edge", len(spots), px, py))
+            return
+
+    def _etrap_release(self, v):
+        """The villager that placed the foundations goes straight back to its job (the foundation stays; measured
+        15/10) - otherwise it walks over and builds the trap house."""
+        r = self.role.get(v.id)
+        try:
+            if isinstance(r, str):
+                self.work(v, r, force=True)
+            else:
+                self.g.move([v], v.x, v.y)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _etrap_builder(self, x, y):
+        """Any villager will do (the foundation appears wherever it stands); the nearest one not owned by a task."""
+        owned = self.task_owned()
+        vs = [v for v in self.s.villagers if v.id not in owned and v.id not in self.defenders]
+        return min(vs, key=lambda v: v.dist(x, y)) if vs else None
 
     def lion_defence(self):
         """A lion attacking one of our workers: the victim and up to 3 villagers within 7 tiles hit it together
