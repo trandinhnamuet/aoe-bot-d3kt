@@ -5350,20 +5350,21 @@ class Brain:
         first_age_building = btype == gs.MARKET or (btype == self.second_building() and not self.any_of(btype))             or (btype == gs.BARRACKS and not self.any_of(gs.BARRACKS))     # (the user: BB, BM, BL close wall gaps)
         of = self.__dict__.get("_outside_fail", {}).get(btype)
         outside_ok = not (of and of[0] >= 2 and self.now() - of[1] < 240)   # (units4: 8 failures in a row out there)
-        if btype in MILITARY_BUILDINGS and self.military_hub() is not None:
+        if btype in MILITARY_BUILDINGS and btype != gs.BARRACKS and self.military_hub() is not None:
+            # (the barracks is no military building to the user - no bot fields its units: it stands on the wall line)
             # the user (14/10): every military building in ONE cluster, chosen at the Tool click, outside
             # the wall (units come out free) and toward the map centre / the enemy - the first barracks and
             # the age's stable / range too (they used to close wall gaps)
             spot = self.hub_spot(btype, wide=not outside_ok)
             if spot:
                 return spot, "(military cluster, outside the wall)"
-        elif btype in MILITARY_BUILDINGS and btype != gs.ACADEMY:
+        elif btype in MILITARY_BUILDINGS and btype not in (gs.ACADEMY, gs.BARRACKS):
             # no cluster yet: wait a minute for one before a lone building in the town (it would never be part
             # of the cluster - hub1 P3)
             t0 = self.__dict__.setdefault("_hub_wait_t0", self.now())
             if self.now() - t0 < 60:
                 return None, "(waits for the military cluster)"
-        if btype in MILITARY_BUILDINGS and not first_age_building and outside_ok:
+        if btype in MILITARY_BUILDINGS and btype != gs.BARRACKS and not first_age_building and outside_ok:
             spot = self.outside_spot(btype)
             if spot:
                 return spot, "(outside the wall)"
@@ -5440,7 +5441,7 @@ class Brain:
         if best is None:
             # a military building already standing (built while no cluster could be found) becomes the cluster:
             # the later ones go next to it, never one here and one there
-            first = [b for b in self.s.mine if b.type in MILITARY_BUILDINGS and b.kind == gs.KIND_BUILDING
+            first = [b for b in self.s.mine if b.type in MILITARY_BUILDINGS and b.type != gs.BARRACKS and b.kind == gs.KIND_BUILDING
                      and not (inside is not None and (int(b.x), int(b.y)) in inside)]
             if first:
                 self.mil_hub = (first[0].x, first[0].y)

@@ -346,7 +346,7 @@ def _add_edge(adj, u, v, cap):
 SOFT_CAP = 80                                         # a farm tile on the cut (a house tile is 100 + distance)
 
 
-def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None, soft=None):
+def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None, soft=None, sink=None):
     """The cheapest set of tiles whose blocking separates the TC (and anchors) from every passable
     tile rmax or more from the TC, given the terrain / buildings in `work`. Tiles in `uncuttable`
     (a function (x, y) -> bool) and unexplored tiles can be walked through but never built on.
@@ -389,7 +389,7 @@ def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None,
                     _add_edge(adj, 2 * k + 1, 2 * j, INF)
             if (xx, yy) in src_tiles:
                 _add_edge(adj, S, 2 * k, INF)
-            if d >= rmax:
+            if (sink(xx, yy) if sink is not None else d >= rmax):
                 _add_edge(adj, 2 * k + 1, T, INF)
             continue
         cuttable = not uncuttable(xx, yy)
@@ -403,7 +403,7 @@ def min_cut_tiles(work, tc, anchors, rmax, uncuttable, explored=None, dear=None,
                 _add_edge(adj, 2 * k + 1, 2 * j, INF)
         if (xx, yy) in src_tiles:
             _add_edge(adj, S, 2 * k, INF)
-        if d >= rmax:
+        if (sink(xx, yy) if sink is not None else d >= rmax):
             _add_edge(adj, 2 * k + 1, T, INF)
     flow = _dinic(n, adj, S, T)
     if flow >= INF:
@@ -447,7 +447,7 @@ def _inside_set(work, tc, rmax):
 
 
 def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored=None, size=2, max_slots=60,
-             rounds=6, soft=()):
+             rounds=6, soft=(), sink=None):
     """The terrain-following enclosure: minimum-cut tiles between the town and the field, covered by
     size x size footprints; re-cut with the footprints in place until the town is sealed.
     Returns a Plan (mode 'wide'): openings = cut tiles still uncovered, slots = footprints to build,
@@ -504,7 +504,7 @@ def plan_cut(pm, tc, anchors, rmax, keep_clear=(), uncuttable_rects=(), explored
     slots, leaks, all_cut, all_soft = [], [], [], []
     flow = 0
     for _round in range(rounds):
-        cut, flow = min_cut_tiles(work, tc, anchors, rmax, uncuttable_full, explored, dear=in_keep_clear, soft=soft)
+        cut, flow = min_cut_tiles(work, tc, anchors, rmax, uncuttable_full, explored, dear=in_keep_clear, soft=soft, sink=sink)
         if flow >= INF:
             break
         p_soft = [t for t in cut if t in soft]
