@@ -5120,11 +5120,19 @@ class Brain:
             # (the chase goes on while any of ours is within 10 tiles of it: archers re-target every shot, so
             #  "has an attack order on it" ended the first trap 4 s in - etrap1)
             chasing = [u for u in self.military() if e is not None and u.dist(e.x, e.y) <= 14]
-            over = e is None or (not chasing and t - A["t0"] > 8) or \
-                min(math.hypot(e.x - fx, e.y - fy) for (fx, fy) in A["spots"]) > 16
+            # (a target out of sight for a moment is not dead: chase_v2 ended a trap "dead" and then kept adding
+            #  foundations for the same unit 18 s later - 2 s of absence end it, and an ended trap never adds)
+            if e is None:
+                A.setdefault("unseen", t)
+            else:
+                A.pop("unseen", None)
+            over = (e is None and t - A["unseen"] > 2.0) or (not chasing and t - A["t0"] > 8) or (
+                e is not None and min(math.hypot(e.x - fx, e.y - fy) for (fx, fy) in A["spots"]) > 16)
+            if e is None and not over and A.get("ended") is None:
+                return
             founds = [o for o in s.mine if o.type == gs.HOUSE and o.hp <= 1.5 and
                       any(abs(o.x - fx) < 1.1 and abs(o.y - fy) < 1.1 for (fx, fy) in A["spots"])]
-            if not over:
+            if not over and A.get("ended") is None:
                 # a foundation shot down: again, at once
                 for (fx, fy) in A["spots"]:
                     if not any(abs(o.x - fx) < 1.1 and abs(o.y - fy) < 1.1 for o in founds) and t - A["placed"].get((fx, fy), -99) > 2.5 \
@@ -5163,7 +5171,7 @@ class Brain:
             if A.get("ended") is None:
                 A["ended"] = t
                 self.say("ETRAP chase of #%d over (%s): %d foundations, %d orders, deleted in %d s" % (
-                    A["eid"], "dead" if e is None else ("nobody chasing" if not chasing else "ran off"), len(founds), A["n_orders"], self.ETRAP_DELETE_AFTER))
+                    A["eid"], "dead or unseen 2 s" if e is None else ("nobody chasing" if not chasing else "ran off"), len(founds), A["n_orders"], self.ETRAP_DELETE_AFTER))
             if t - A["ended"] >= self.ETRAP_DELETE_AFTER or not founds:
                 for o in founds:
                     try:
