@@ -13,6 +13,8 @@ import gamedir
 import lobby
 import orchestrator
 import ui_theme as T
+import updater
+from version import VERSION
 
 APP_TITLE = "AoE Solo vs AI — D3KT"
 CIV_CHOICES = ["Ngẫu nhiên"] + lobby.CIVS
@@ -124,6 +126,9 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.bind("<Return>", lambda e: self.play())
         root.after(200, self.pump)
+        if updater.running_exe():
+            updater.cleanup_old(updater.running_exe())
+        threading.Thread(target=self._check_update, daemon=True).start()
         self.game_dir = self.editions.get(self.edition.get()) or gamedir.find(base_dir(), deep=False)
         if os.environ.get("AOESOLO_UI_PREVIEW"):
             # (screenshots of the window off screen, no bots started: the look is checked without a game)
@@ -145,6 +150,7 @@ class App:
         c.create_text(W // 2, 66, text="LUẬT D3KT", fill=T.GOLD, font=("Segoe UI", 9, "bold"))
         c.create_line(W // 2 + 60, 66, W // 2 + 190, 66, fill=T.GOLD)
         c.create_text(W // 2, 86, text="Đời 3 không thành · bot chơi như người theo luật của bạn", fill=T.MUTED, font=T.FONT_S)
+        c.create_text(W - 24, 22, text="bản " + VERSION, fill=T.MUTED, font=T.FONT_S, anchor="ne")
 
     def build_room(self):
         self.room = T.Card(self.root, pad=12)
@@ -228,11 +234,14 @@ class App:
         self.status = tk.StringVar(value="Sẵn sàng")
         tk.Label(bar, textvariable=self.status, bg=T.BG2, fg=T.TEXT, font=T.FONT_B, anchor="w").place(x=36, y=10, width=600)
         self.sub = tk.StringVar(value="Bot ẩn được chuẩn bị sẵn trong lúc bạn chọn cài đặt.")
-        tk.Label(bar, textvariable=self.sub, bg=T.BG2, fg=T.MUTED, font=T.FONT_S, anchor="w").place(x=36, y=34, width=600)
+        self.sub_lbl = tk.Label(bar, textvariable=self.sub, bg=T.BG2, fg=T.MUTED, font=T.FONT_S, anchor="w")
+        self.sub_lbl.place(x=36, y=34, width=600)
         self.log_btn = T.Button(bar, "Nhật ký ▸", kind="tiny", command=self.toggle_log)
         self.log_btn.place(x=36, y=58)
         self.ready_btn = T.Button(bar, "Bot sẵn sàng lại", kind="ghost", command=self.reready)
         self.ready_btn.place(x=668, y=24)
+        self.update_btn = T.Button(bar, "", kind="gold", command=self.do_update)   # shown when a newer release exists
+        self.update = None
         self.play_btn = T.Button(bar, "VÀO TRẬN", kind="primary", command=self.play)
         self.play_btn.place(x=820, y=18, width=180)
         self.log_box = tk.Text(self.root, bg="#101010", fg=T.MUTED, font=("Consolas", 9), relief="flat", wrap="word",
@@ -429,6 +438,8 @@ class App:
                     self._apply_status(s, colour or (T.AMBER if self.playing else None))
                 elif kind == "log":
                     self._append_log(val)
+                elif kind == "update":
+                    self._show_update(val)
                 elif kind == "error":
                     self._apply_status("Lỗi: " + val, T.RED)
                     self.playing = False
@@ -502,6 +513,58 @@ class App:
         self.q.put(("done", "Trận đã kết thúc"))
         self.root.after(1000, self.warm_bots)
 
+    # ---------------------------------------------------------------- updates
+    def _check_update(self):
+        try:
+            info = updater.check()
+        except Exception as e:  # noqa: BLE001
+            self.log("update check failed: %r" % (e,))
+            return
+        if info:
+            self.log("update available: %s" % info["version"])
+            self.q.put(("update", info))
+
+    def _show_update(self, info):
+        self.update = info
+        first = next((ln.strip(" -") for ln in info["notes"].splitlines() if ln.strip() and not ln.lower().startswith("bản")), "")
+        self.sub.set(("Có bản %s. " % info["version"]) + (first[:70] if first else "Bấm Cập nhật để tải và mở lại."))
+        self.update_btn.configure(text="⬆  Cập nhật %s" % info["version"])
+        self.update_btn.place(x=500, y=26)
+        self.sub_lbl.place_configure(width=455)
+
+    def do_update(self):
+        """One click: download the zip, swap the exe, restart. In a dev run (not frozen) only the download is done."""
+        if not self.update or self.playing:
+            return
+        self.update_btn.set_enabled(False)
+        info = self.update
+
+        def work():
+            try:
+                zpath = updater.temp_zip()
+
+                def prog(done, total):
+                    pct = (100 * done // total) if total else 0
+                    self.set_status("Đang tải bản %s... %d%%" % (info["version"], pct), T.AMBER)
+                updater.download(info["url"], zpath, prog)
+                exe = updater.running_exe() or os.environ.get("AOESOLO_UPDATE_TARGET")
+                if not exe:
+                    self.q.put(("done", "Đã tải %s (bản chạy từ mã nguồn: không thay exe)" % zpath))
+                    return
+                self.set_status("Đang thay file...", T.AMBER)
+                if self.pool:
+                    self.pool.shutdown()
+                updater.swap(zpath, exe)
+                self.set_status("Đang mở lại bản %s..." % info["version"], T.GREEN)
+                self.log("updated to %s, restarting" % info["version"])
+                updater.restart(exe)
+                self.root.after(600, self.root.destroy)
+            except Exception as e:  # noqa: BLE001
+                self.log("update failed: %r" % (e,))
+                self.q.put(("error", "Cập nhật không thành công: %s\nBạn có thể tải tay tại %s" % (e, info.get("page", ""))))
+                self.root.after(0, lambda: self.update_btn.set_enabled(True))
+        threading.Thread(target=work, daemon=True).start()
+
     def reready(self):
         sess = self.session
         if sess and sess.bots:
@@ -557,7 +620,7 @@ def check():
     """AoESolo.exe --check: import every module the launcher needs and report (packaging test)."""
     out = []
     for name in ("psutil", "winreg", "PIL", "PIL.ImageTk", "dplobby", "orchestrator", "lobby", "procs", "inject", "aoemem",
-                 "gamedir", "gamestate", "d3kt", "pathing", "walling", "placement", "gamewin", "brainproc", "ui_theme",
+                 "gamedir", "gamestate", "d3kt", "pathing", "walling", "placement", "gamewin", "brainproc", "ui_theme", "updater", "version",
                  "brain.brain", "brain.plan", "brain.jobs", "brain.adapter", "brain.tasks.lure", "brain.tasks.herd"):
         try:
             __import__(name)
