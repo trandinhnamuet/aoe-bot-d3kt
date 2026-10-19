@@ -1661,7 +1661,20 @@ class Brain:
         try:
             fut = _cut_pool().submit(walling.cut_job, pm.W, pm.H, bytes(pm.blk), a, kw)
         except Exception as e:  # noqa: BLE001
-            j["err"], j["done"] = e, True
+            # no worker process possible (a daemonic brain process, a frozen oddity): the cut runs in a thread of
+            # this process instead - slower ticks, but a wall (20/10: six campaign games without one wall)
+            if not getattr(self, "_cut_thread_said", False):
+                self._cut_thread_said = True
+                self.say("wall cut: no worker process (%r), computing in a thread" % (e,))
+            W_, H_, blk_ = pm.W, pm.H, bytes(pm.blk)
+
+            def run_thread(j=j):
+                try:
+                    j["res"] = walling.cut_job(W_, H_, blk_, a, kw)
+                except Exception as e2:  # noqa: BLE001
+                    j["err"] = e2
+                j["done"] = True
+            threading.Thread(target=run_thread, daemon=True, name="wallcut-%d" % self.me).start()
             return None
 
         def done_cb(f, j=j):

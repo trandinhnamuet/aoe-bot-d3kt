@@ -515,6 +515,12 @@ class App:
 
     # ---------------------------------------------------------------- updates
     def _check_update(self):
+        test_url = os.environ.get("AOESOLO_UPDATE_TEST_URL")
+        if test_url:
+            # (a test of the one-click path with a local zip: file:///...; the update runs by itself after 2 s)
+            self.q.put(("update", {"version": "9.9.9", "url": test_url, "notes": "Bản thử", "page": ""}))
+            self.root.after(2000, self.do_update)
+            return
         try:
             info = updater.check()
         except Exception as e:  # noqa: BLE001

@@ -16,7 +16,7 @@ def enabled():
     return os.environ.get("AOESOLO_BRAIN_PROCS", "1") != "0"
 
 
-def _child(pid, me, enemies, logq, stop_ev, period, pop_limit, limit_s, tag):
+def _child(pid, me, enemies, logq, stop_ev, period, pop_limit, limit_s, tag, parent_pid=0):
     """The child process: its own Mem / Hook on the game, the brain loop until the stop event or the game-time
     limit; every log line goes to the parent's queue."""
     import aoemem
@@ -35,6 +35,8 @@ def _child(pid, me, enemies, logq, stop_ev, period, pop_limit, limit_s, tag):
         def stop():
             if stop_ev.is_set():
                 return True
+            if parent_pid and not _alive(parent_pid):
+                return True                               # (the launcher is gone: a non-daemon child ends itself)
             if limit_s:
                 try:
                     w = g.world()
@@ -50,6 +52,35 @@ def _child(pid, me, enemies, logq, stop_ev, period, pop_limit, limit_s, tag):
             logq.put((tag, None))
         except Exception:  # noqa: BLE001
             pass
+        # the brain's wall-cut worker pool would keep this (non-daemon) process alive at interpreter exit: shut it
+        # down and leave at once (wallfix 20/10: the arena waited on two brains that never ended)
+        try:
+            import d3kt
+            pool = getattr(d3kt, "_CUT_POOL", None)
+            if pool is not None:
+                workers = list(getattr(pool, "_processes", {}).values())
+                pool.shutdown(wait=False, cancel_futures=True)
+                for wp in workers:                       # (Windows does not end a child with its parent)
+                    try:
+                        wp.terminate()
+                    except Exception:  # noqa: BLE001
+                        pass
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            logq.close()
+            logq.join_thread()
+        except Exception:  # noqa: BLE001
+            pass
+        os._exit(0)
+
+
+def _alive(pid):
+    try:
+        import psutil
+        return psutil.pid_exists(pid)
+    except Exception:  # noqa: BLE001
+        return True
 
 
 class BrainProc:
@@ -106,7 +137,9 @@ def start(pid, me, enemies, log, period=0.6, pop_limit=200, limit_s=0.0):
     tag = "%d-%d" % (pid, me)
     _SINKS.append((log, tag))
     ev = mp.Event()
-    p = mp.Process(target=_child, args=(pid, me, list(enemies), _LOGQ, ev, period, pop_limit, limit_s, tag),
-                   name="brain-P%d" % me, daemon=True)
+    # NOT a daemon: a daemonic process may not start children, and the wall cut runs in a worker process
+    # (skill campaign 20/10: "daemonic processes are not allowed to have children" - no bot walled for six games)
+    p = mp.Process(target=_child, args=(pid, me, list(enemies), _LOGQ, ev, period, pop_limit, limit_s, tag, os.getpid()),
+                   name="brain-P%d" % me, daemon=False)
     p.start()
     return BrainProc(p, ev, me)

@@ -55,7 +55,7 @@ def sampler():
         ram = 0
         for p in psutil.process_iter(["name", "pid"]):
             n = (p.info["name"] or "").lower()
-            if n not in ("aoebot.exe", "python.exe", "pythonw.exe"):
+            if n != "aoebot.exe" and not n.startswith("python"):      # (the Store Python runs as python3.10.exe)
                 continue
             try:
                 h = procs.get(p.pid)

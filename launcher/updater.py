@@ -100,7 +100,8 @@ def cleanup_old(exe_path):
 
 
 def restart(exe_path):
-    subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path), close_fds=True,
+    env = {k: v for k, v in os.environ.items() if k != "AOESOLO_UPDATE_TEST_URL"}   # (the test hook runs once)
+    subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path), close_fds=True, env=env,
                      creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
 
 
