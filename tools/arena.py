@@ -8,6 +8,7 @@ tools/arena/results.jsonl: tool / bronze click (game s), villagers at Tool, idle
 distance to the learned player profile. Stops early (exit 3) if League of Legends or the user's AoE starts.
 """
 import argparse
+import struct
 import json
 import os
 import re
@@ -31,6 +32,8 @@ ap.add_argument("--age", default="Default", help="starting age: Default, Tool Ag
 ap.add_argument("--resources", default="Default", help="Default, Medium, High")
 ap.add_argument("--reveal", action="store_true", help="lobby Reveal Map (tests: every tile explored at the start)")
 ap.add_argument("--cheats", action="store_true", help="lobby Allow Cheats (staged tests: the bots type STEROIDS / WOODSTOCK)")
+ap.add_argument("--map", default="Hill Country", help="map type (lobby name)")
+ap.add_argument("--size", default="Large", help="map size: Tiny, Small, Medium, Large, Huge, Gigantic")
 ap.add_argument("--teams", default="", help="comma list of teams for P1, P2, ... (2v2: 1,1,2,2; empty = all alone)")
 ap.add_argument("--game", default=r"D:\Game\AoE-HD", help="game folder (AoE HD or the normal AOE1R)")
 ap.add_argument("--brain", default="new", choices=("old", "new"), help="new = brain.brain.NewBrain (one allocation table), old = d3kt.Brain")
@@ -51,11 +54,13 @@ PROFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "learned", "p
 os.makedirs(OUT, exist_ok=True)
 stamp = time.strftime("%Y%m%d_%H%M%S")
 logpath = os.path.join(OUT, "%s_%s.log" % (stamp, args.tag))
-logf = open(logpath, "w", encoding="utf-8")
+logf = open(logpath, "w", encoding="utf-8") if __name__ == "__main__" else None   # (brain child processes re-import this file)
 lk = threading.Lock()
 
 
 def L(m):
+    if logf is None:
+        return
     with lk:
         logf.write(time.strftime("%H:%M:%S ") + m + "\n")
         logf.flush()
@@ -137,7 +142,7 @@ def main():
         time.sleep(0.5)
     cfg = orchestrator.Config()
     cfg.num_ai = n_ai
-    cfg.map_type, cfg.map_size, cfg.pop_limit = "Hill Country", "Large", 200
+    cfg.map_type, cfg.map_size, cfg.pop_limit = args.map, args.size, 200
     civs = [c.strip() for c in args.civs.split(",") if c.strip()]
     vals = [(lobby.CIVS.index(c) + 1) if c in lobby.CIVS else 0 for c in civs]
     cfg.player_civ = vals[0] if vals else 0
@@ -160,6 +165,17 @@ def main():
     try:
         s.run()
         host = s.player
+        if os.environ.get("AOESOLO_SEED"):
+            # the match seed (map AND random civs come from it, 16/10): the host's comm object caches it at
+            # +0x170c and hands it to the civ draw and the world init; written before Start, the clients get it
+            # in the start settings
+            seed = int(os.environ["AOESOLO_SEED"], 0) & 0xFFFFFFFF
+            comm = host.mem.u32(0x585DF8)
+            ok = bool(comm) and host.mem.write(comm + 0x170C, struct.pack("<I", seed))
+            L("match seed %d written to the host (%s)" % (seed, "ok" if ok else "FAILED"))
+        import ctypes
+        import datetime
+        L("START clock=%s tgt=%d" % (datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3], ctypes.windll.winmm.timeGetTime()))
         lobby.start_match(host, args.players, log=L)
         if not args.no_rec:
             import mapcap.engine as mce
@@ -197,6 +213,14 @@ def main():
         L("brains: %s" % ("one process each" if brainproc.enabled() else "threads of this process"))
         games[allp[0]].set_speed(args.speed)
         L("game speed set to x%.1f" % args.speed)
+        try:
+            gm = host.mem.u32(0x585E88)
+            cm = host.mem.u32(0x585DF8)
+            L("SEEDINFO comm_seed=%d game30=%d civs=%s flags=%s" % (
+                host.mem.u32(cm + 0x170C), host.mem.u32(gm + 0x30), list(host.mem.read(gm + 0xA94, 8)),
+                list(struct.unpack("<8I", host.mem.read(gm + 0xA58, 32)))))
+        except Exception as e:  # noqa: BLE001
+            L("SEEDINFO failed: %r" % (e,))
         grant = os.environ.get("AOESOLO_GRANT", "")
         if grant:
             # DO NOT USE (kept as a record): resources written into every game process at once - the match clock

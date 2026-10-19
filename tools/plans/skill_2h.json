@@ -1,0 +1,10 @@
+{
+ "games": [
+  {"name": "1v1a", "args": ["--players", "2", "--size", "Large", "--minutes", "25"]},
+  {"name": "4v4a", "args": ["--players", "8", "--size", "Gigantic", "--teams", "1,1,1,1,2,2,2,2", "--minutes", "25"]},
+  {"name": "1v1b", "args": ["--players", "2", "--size", "Large", "--minutes", "25"]},
+  {"name": "ffa4", "args": ["--players", "4", "--size", "Large", "--minutes", "25"]},
+  {"name": "4v4b", "args": ["--players", "8", "--size", "Gigantic", "--teams", "1,1,1,1,2,2,2,2", "--minutes", "25"]},
+  {"name": "1v1c", "args": ["--players", "2", "--size", "Large", "--minutes", "25"]}
+ ]
+}

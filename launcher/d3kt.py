@@ -1027,9 +1027,10 @@ class Brain:
             attr36 = self.g.resources(self.me, 40)[36]      # (the player's "food per farm" attribute)
         except Exception:  # noqa: BLE001
             attr36 = -1
-        self.say("STAT " + tcs + "wdfix=%d vil=%d food=%d wood=%d gold=%d age=%d farms=%d/%d farmfood=%.0f idle=%s roles=%s sites=%d hunt_cap=%d tick=%.0f/%.0fms" % (
+        self.say("STAT " + tcs + "wdfix=%d vil=%d food=%d wood=%d gold=%d age=%d farms=%d/%d farmfood=%.0f army=%d bldg=%d idle=%s roles=%s sites=%d hunt_cap=%d tick=%.0f/%.0fms" % (
             self.wd.get("idle_fixes", 0), len(self.s.villagers), self.res(gs.FOOD), self.res(gs.WOOD), self.res(gs.GOLD),
-            self.age, len(self.complete(gs.FARM)), getattr(self, "farms_built", 0), attr36, idle,
+            self.age, len(self.complete(gs.FARM)), getattr(self, "farms_built", 0), attr36, len(self.military()),
+            sum(1 for o in self.s.mine if o.kind == gs.KIND_BUILDING and o.hp > 2), idle,
             ",".join("%s:%d" % kv for kv in sorted(roles.items())), len(self.sites), self.hunt_capacity,
             1000 * sum(tk) / len(tk) if tk else 0, 1000 * max(tk) if tk else 0))
         self.tick_times = []
