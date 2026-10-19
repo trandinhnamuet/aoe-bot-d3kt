@@ -100,7 +100,10 @@ def cleanup_old(exe_path):
 
 
 def restart(exe_path):
-    env = {k: v for k, v in os.environ.items() if k != "AOESOLO_UPDATE_TEST_URL"}   # (the test hook runs once)
+    # a clean environment: without the PyInstaller onefile variables (_MEIPASS2, _PYI_*) the new exe would run
+    # inside the OLD extraction folder, and the old bootloader could never remove it or exit (e2e 20/10)
+    env = {k: v for k, v in os.environ.items()
+           if k != "AOESOLO_UPDATE_TEST_URL" and not k.startswith("_MEI") and not k.startswith("_PYI")}
     subprocess.Popen([exe_path], cwd=os.path.dirname(exe_path), close_fds=True, env=env,
                      creationflags=getattr(subprocess, "DETACHED_PROCESS", 0))
 

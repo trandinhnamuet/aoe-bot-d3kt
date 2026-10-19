@@ -127,7 +127,9 @@ class App:
         root.bind("<Return>", lambda e: self.play())
         root.after(200, self.pump)
         if updater.running_exe():
-            updater.cleanup_old(updater.running_exe())
+            # (the previous exe may still be closing for a few seconds after an update: a few tries)
+            for delay in (0, 3000, 8000, 20000):
+                root.after(delay, lambda: updater.cleanup_old(updater.running_exe()))
         threading.Thread(target=self._check_update, daemon=True).start()
         self.game_dir = self.editions.get(self.edition.get()) or gamedir.find(base_dir(), deep=False)
         if os.environ.get("AOESOLO_UI_PREVIEW"):
@@ -440,6 +442,17 @@ class App:
                     self._append_log(val)
                 elif kind == "update":
                     self._show_update(val)
+                elif kind == "quit":
+                    # (the frozen onefile exe did not end after destroy(): the parent bootloader kept waiting -
+                    #  e2e 20/10; leaving the interpreter outright ends both)
+                    def bye():
+                        try:
+                            self.logfile.close()
+                            self.root.destroy()
+                        finally:
+                            os._exit(0)
+                    self.root.after(300, bye)
+                    return
                 elif kind == "error":
                     self._apply_status("Lỗi: " + val, T.RED)
                     self.playing = False
@@ -564,7 +577,8 @@ class App:
                 self.set_status("Đang mở lại bản %s..." % info["version"], T.GREEN)
                 self.log("updated to %s, restarting" % info["version"])
                 updater.restart(exe)
-                self.root.after(600, self.root.destroy)
+                self.q.put(("quit", None))                # (the window is closed on the Tk thread: after() from
+                                                          #  this thread never fired - e2e 20/10, the old exe stayed)
             except Exception as e:  # noqa: BLE001
                 self.log("update failed: %r" % (e,))
                 self.q.put(("error", "Cập nhật không thành công: %s\nBạn có thể tải tay tại %s" % (e, info.get("page", ""))))
