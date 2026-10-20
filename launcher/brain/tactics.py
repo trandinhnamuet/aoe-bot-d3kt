@@ -152,8 +152,12 @@ def assess(b):
     n_enemy_bld = sum(1 for o in getattr(b.s, "enemy_all", []) if o.kind == 80)
     want_siege = b.age >= 3 and mode == "assault" and enemy_tc is not None and (n_enemy_bld >= 25 or enemy_vils >= 1.3 * len(b.s.villagers))
     farms = len(b.complete(gs.FARM))
+    bronze_for = t - (getattr(b, "bronze_click_t", None) or t)
     want_iron = b.age >= 3 and ((farms > IRON_FARMS)                       # (the user, 20/10)
-                                or (t - (b.start_time or 0) > 1200 and enemy_vils > 0 and b.res(0) >= 1000 + 200 and b.res(3) >= 800 + 150))
+                                or (t - (b.start_time or 0) > 1200 and enemy_vils > 0 and b.res(0) >= 1000 + 200 and b.res(3) >= 800 + 150)
+                                # the bank already holds the Iron Age with room to spare (iron4 20/10: 8 900 food and
+                                # 2 800 gold banked at minute 50 with 35 farms, never clicked)
+                                or (bronze_for > 360 and farms >= 10 and b.res(0) >= 1500 and b.res(3) >= 1000))
     iron_plan = IRON_PLAN.get(our_civ)
     iron_saving = want_iron and b.age == 3 and not getattr(b, "iron_clicked", False)
     if b.age >= 4 and iron_plan:

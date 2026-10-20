@@ -3060,10 +3060,14 @@ class Brain:
         grans = self.any_of(gs.GRANARY)
         kc = self.keep_clear()
         best, best_s = None, -1e9
-        for x0 in range(int(tc.x) - 28, int(tc.x) + 27, 2):
-            for y0 in range(int(tc.y) - 28, int(tc.y) + 27, 2):
+        # 28 tiles out, then 40 when nothing fits (iron4 20/10: a 42-house wall town found no spot, 18 farmers for
+        # 12 farms and 4 500 wood banked)
+        R = 28 if t - getattr(self, "_fg_none_t", -999) > 120 else 40
+        n_cand = 0
+        for x0 in range(int(tc.x) - R, int(tc.x) + R - 1, 2):
+            for y0 in range(int(tc.y) - R, int(tc.y) + R - 1, 2):
                 d = math.hypot(x0 + 1.5 - tc.x, y0 + 1.5 - tc.y)
-                if d < FARM_RING + 4 or d > 28:
+                if d < FARM_RING + 4 or d > R:
                     continue
                 if any(math.hypot(g0.x - x0 - 1.5, g0.y - y0 - 1.5) < 10 for g0 in grans):
                     continue                             # (another granary's farm ring)
@@ -3080,10 +3084,16 @@ class Brain:
                 if slots < 5:
                     continue
                 inside = self.wall_inside(x0 + 1.5, y0 + 1.5)
+                n_cand += 1
                 score = slots * 6 + (120 if inside else 0) - d * 2
                 if score > best_s:
                     best, best_s = (x0, y0, slots, inside), score
         if best is None:
+            self._fg_none_t = t
+            if t - getattr(self, "_fg_say", -999) > 120:
+                self._fg_say = t
+                self.say("farm granary: no spot within %d tiles (%d candidates with 5+ farm slots), %d farmers for %d farms" % (
+                    R, n_cand, sum(1 for o in self.s.villagers if self.role_name(o.id) == "farm"), len(self.complete(gs.FARM))))
             return False
         x0, y0, slots, inside = best
         if not self.farm_paths_ok_granary(x0, y0):
@@ -6269,7 +6279,9 @@ class Brain:
                 if not self.any_of(gs.ARCHERY_RANGE):
                     wants.append((gs.ARCHERY_RANGE, 150, "(BA opens BK) "))
                 wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop) "))
-            if A.get("want_iron") and self.bronze_buildings() < 2:
+            if (A.get("want_iron") or A.get("farms", 0) >= 15) and self.bronze_buildings() < 2:
+                # (the two Bronze buildings are ready before the Iron Age is wanted: iron4 20/10 had the food and
+                #  the gold and no Government Center when the farms passed 35 at minute 54)
                 # two Bronze buildings of any kind: the Government Center (Nobility) first, then a temple
                 for bt, cost, why0 in ((gs.GOVERNMENT_CENTER, 175, "(government centre: for Iron) "), (gs.TEMPLE, 200, "(temple: for Iron) ")):
                     if not self.any_of(bt):
