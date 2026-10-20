@@ -29,6 +29,7 @@ def build_exe():
     policy = os.path.join(ROOT, "launcher", "rl", "policies", "herd_push.json")   # the learned herd push (optional)
     data = ["--add-data", policy + os.pathsep + os.path.join("rl", "policies")] if os.path.exists(policy) else []
     run([PY, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed", "--name", "AoESolo",
+         "--icon", os.path.join(ROOT, "launcher", "aoesolo.ico"),
          "--paths", os.path.join(ROOT, "launcher"),
          "--hidden-import", "psutil", *data,
          "--add-binary", os.path.join(ROOT, "hook", "aoehook.dll") + os.pathsep + "bin",

@@ -164,6 +164,17 @@ class App:
         self.count_lbl.pack(side="left", padx=(10, 0))
         T.Button(head, "Mỗi người một phe", kind="ghost", command=lambda: self.preset("ffa")).pack(side="right", padx=(6, 0))
         T.Button(head, "Các AI cùng phe", kind="ghost", command=lambda: self.preset("together")).pack(side="right")
+        # the quick bot count (the user, 20/10: 1v7 took seven clicks): 1..7 buttons, the chosen one gold
+        row2 = tk.Frame(self.room, bg=T.BG2)
+        row2.pack(fill="x", pady=(8, 0))
+        T.label(row2, "Số AI", muted=True).pack(side="left", padx=(0, 8))
+        self.count_btns = []
+        for n in range(1, MAX_AI + 1):
+            b = T.Button(row2, " %d " % n, kind="ghost", command=lambda n=n: self.set_ai_count(n))
+            b.pack(side="left", padx=2)
+            self.count_btns.append(b)
+        self.size_note = T.label(row2, "", muted=True)
+        self.size_note.pack(side="left", padx=(14, 0))
         tk.Frame(self.room, bg=T.LINE, height=1).pack(fill="x", pady=(8, 6))
         seats = tk.Frame(self.room, bg=T.BG2)
         seats.pack(fill="both", expand=True)
@@ -208,6 +219,8 @@ class App:
         row(3, "Dân số tối đa", self.pop, [str(p) for p in lobby.POP_LIMITS], "pop")
         row(4, "Điều kiện thắng", self.victory, lobby.VICTORIES, "victory")
         row(5, "Độ phân giải", self.resolution, RESOLUTIONS, "resolution")
+        self._last_n = None
+        self.refresh_seats()                              # (the map size for the saved seat count)
 
         game = T.Card(self.root, title="Bản game", pad=12)
         game.place(x=676, y=420, width=364, height=158)
@@ -257,11 +270,39 @@ class App:
     def first_empty(self):
         return next((s for s in self.seats[1:] if s.kind == "empty"), None)
 
+    @staticmethod
+    def size_for(players):
+        """The user (20/10): up to 4 players Large, 5-7 Huge, 8 Gigantic."""
+        return "Large" if players <= 4 else ("Huge" if players <= 7 else "Gigantic")
+
+    def set_ai_count(self, n):
+        """n AI seats (1..7), the new ones random civ on the AIs' team; the map size follows the player count."""
+        for i, s in enumerate(self.seats[1:]):
+            if i < n and s.kind != "ai":
+                s.kind = "ai"
+                s.civ.set(CIV_CHOICES[0])
+                s.team.set("2" if self.seats[0].team.get() in ("1", "—") else "—")
+            elif i >= n:
+                s.kind = "empty"
+        if self.seats[0].team.get() == "—" and all(a.team.get() == "2" for a in self.active_ai()):
+            self.seats[0].team.set("1")                   # (default: you against all the AIs together)
+        self.refresh_seats()
+
     def refresh_seats(self):
         for s in self.seats:
             s.render()
         n = len(self.active_ai())
         self.count_lbl.configure(text="bạn + %d AI" % n)
+        for i, b in enumerate(self.count_btns):
+            on = (i + 1) == n
+            b.configure(bg=T.GOLD if on else T.BG3, fg="#1a1a1a" if on else T.TEXT)
+            b.look = dict(b.look, bg=T.GOLD if on else T.BG3, fg="#1a1a1a" if on else T.TEXT, hover=T.GOLD2 if on else "#333333")
+        if hasattr(self, "map_size"):
+            size = self.size_for(1 + n)
+            if n != getattr(self, "_last_n", None):
+                self.map_size.set(size)                   # (the map size follows the player count; it can still be changed)
+                self._last_n = n
+            self.size_note.configure(text="%d người chơi → bản đồ %s" % (1 + n, size))
         if self.pool is not None:
             threading.Thread(target=self.pool.ensure, args=(n,), daemon=True).start()
         self.autosave()
