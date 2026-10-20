@@ -55,6 +55,8 @@ PHALANX = 94             # "Y đẹp" (after Phalanx 73)
 CENTURION = 291          # "Y thần" (after Centurion 79)
 CATAPULT = 36            # "K" = Soldier-Catapult2 (after Heavy Catapult 54 - the research that upgrades the stone thrower)
 HEAVY_CATAPULT = 280     # "K thần" = Soldier-Catapult3 (after Massive Catapult 36)
+BALLISTA = 11            # "bẹt" = Soldier-Balista: 100 wood 80 gold
+HELEPOLIS = 279          # "bẹt thần" = Soldier-Balista2 (after Helepolis 27)
 CHARIOT_ARCHER = 41      # "cung R" = "Soldier-Chariot2", archery range, needs the Wheel (28). (It was 40 - the
                          # stable chariot - so every chariot archer order was refused: recordings 13/10)
 

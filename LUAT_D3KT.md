@@ -464,7 +464,7 @@ Người mới thường kích đời 3 ở phút 13–16.
 
 - **Ruộng khi hết chỗ đẹp:** ở đời 3 và 4, hết chỗ xây ruộng cạnh BN và các BG thì tìm đất trống trong vùng làm ăn, không cản đường đi của dân, xây **BG mới và khoanh ruộng quanh đó** (`farm_granary`: ô 3×3 trống, có ≥ 5 chỗ ruộng quanh, cách BN 10–28 ô, cách BG khác ≥ 10 ô, không bịt lối ra BN). **Trong vùng bo trước; hết đất trong bo thì ra ngoài bo quanh nhà.** Ruộng được xây cạnh mọi BG không còn quả trong 30 ô.
 - **Lên đời 4:** có trên **35 ruộng** thì tích thực + vàng để lên đời 4 (không ra thêm quân khi không bị đe doạ, công nghệ tốn vàng chờ); đời 4 cần 2 nhà đời 3 bất kỳ (BC trước, rồi BP).
-- **Quân đời 4 theo luật:** Choson, Carthaginian, Yamato, Hittite, Assyrian, Shang, Palmyran: horse → horse thần (Heavy Horse Archer, nâng Advanced Horse Archer). Roman, Egyptian: đạp đôi (Scythe Chariot, nâng Heavy Chariots). Minoan: cung A 2 áo + K → K thần (chờ bạn xác nhận chữ "cung A lửa" và "song pháo thần"). Greek, Macedonian: Y → Y đẹp → Y thần (Phalanx, Centurion). Babylonian, Persian, Phoenician, Sumerian: chưa có luật, bot giữ cách đánh đời 3.
+- **Quân đời 4 theo luật:** Choson, Carthaginian, Yamato, Hittite, Assyrian, Shang, Palmyran: horse → horse thần (Heavy Horse Archer, nâng Advanced Horse Archer). Roman, Egyptian: đạp đôi (Scythe Chariot, nâng Heavy Chariots). Minoan: **cung A lửa** = cung A 2 áo + nâng cấp lửa / bắn chặn ở BC (Alchemy, Ballistics) **+ song pháo thần** = K thần (Heavy Catapult) và bẹt thần (Helepolis), BK ra xen kẽ hai loại (bạn giải thích 20/10). Greek, Macedonian: Y → Y đẹp → Y thần (Phalanx, Centurion). Babylonian, Persian, Phoenician, Sumerian: chưa có luật, bot giữ cách đánh đời 3.
 
 ### 3.9 Xe thánh tích (Artifact)
 

@@ -6275,8 +6275,11 @@ class Brain:
                     if not self.any_of(bt):
                         wants.append((bt, cost, why0))
                         break
-            if self.age >= 4 and A.get("iron_plan") == "minoan" and not self.any_of(gs.SIEGE_WORKSHOP):
-                wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop: Minoan catapults) "))
+            if self.age >= 4 and A.get("iron_plan") == "minoan":
+                if not self.any_of(gs.SIEGE_WORKSHOP):
+                    wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop: Minoan catapults + ballistas) "))
+                if not self.any_of(gs.GOVERNMENT_CENTER):
+                    wants.append((gs.GOVERNMENT_CENTER, 175, "(government centre: Alchemy + Ballistics for the bows) "))
         if self.age >= 3 and str(self.me) in os.environ.get("AOESOLO_TEST_WRITING", "").split(","):
             wants.insert(0, (gs.GOVERNMENT_CENTER, 175, "(test: Writing) "))      # (tests only: shared sight)
         if self.age >= 3 and self.horse_army():
@@ -6406,14 +6409,25 @@ class Brain:
             siege = sum(1 for u in mil if tactics.unit_class(u.name) == "siege")
             done_t = getattr(self, "techs_done", set())
             cat = gs.HEAVY_CATAPULT if 36 in done_t else (gs.CATAPULT if 54 in done_t else gs.STONE_THROWER)
-            max_siege = 4 if (self.age >= 4 and A.get("iron_plan") == "minoan") else 3
+            minoan = self.age >= 4 and A.get("iron_plan") == "minoan"
+            max_siege = 6 if minoan else 3
+            n_bal = sum(1 for u in mil if u.type in (gs.BALLISTA, gs.HELEPOLIS))
             for b in self.complete(gs.SIEGE_WORKSHOP):
-                if siege < max_siege and not self.r.producing(b) and self.can_afford(wood=180 + 60, gold=80 + 60):
-                    self.g.train(b, cat)
+                if siege >= max_siege or self.r.producing(b):
+                    continue
+                # Minoan (the user): "song pháo thần" - heavy catapults and helepolis both, alternately
+                if minoan and n_bal < siege - n_bal:
+                    unit_t, cost, nm = (gs.HELEPOLIS if 27 in done_t else gs.BALLISTA), dict(wood=100 + 60, gold=80 + 60), "ballista"
+                else:
+                    unit_t, cost, nm = cat, dict(wood=180 + 60, gold=80 + 60), {gs.STONE_THROWER: "stone thrower", gs.CATAPULT: "catapult"}.get(cat, "heavy catapult")
+                if self.can_afford(**cost):
+                    self.g.train(b, unit_t)
                     siege += 1
+                    if nm == "ballista":
+                        n_bal += 1
                     if t - getattr(self, "_siege_say", 0) > 60:
                         self._siege_say = t
-                        self.say("siege workshop trains %s" % {gs.STONE_THROWER: "stone thrower", gs.CATAPULT: "catapult"}.get(cat, "heavy catapult"))
+                        self.say("siege workshop trains %s" % nm)
         if A and A.get("want_temple"):
             priests = sum(1 for u in mil if tactics.unit_class(u.name) == "priest")
             for b in self.complete(gs.TEMPLE):
@@ -6620,7 +6634,10 @@ class Brain:
         iron_plan = (self.tactics or {}).get("iron_plan")
         if self.age >= 4 and iron_plan:
             first = {"horse_archer": [38, 44, 49, 34], "scythe_chariot": [126, 34, 45, 50, 51],
-                     "centurion": [73, 79, 43, 48, 51, 52], "minoan": [57, 54, 36, 44, 49]}.get(iron_plan, [])
+                     "centurion": [73, 79, 43, 48, 51, 52],
+                     # Minoan (the user, 20/10): "cung A lửa" = composite bowmen with the BC's Alchemy (fire arrows) and
+                     # Ballistics (shooting at moving targets); "song pháo thần" = heavy catapults AND helepolis
+                     "minoan": [57, 37, 106, 54, 36, 27, 44, 49]}.get(iron_plan, [])
             prio = first + [x for x in prio if x not in first]
             avail = list(set(avail) | ({x for x in first if x in avail}))
             useless = set()                           # (the plan's own upgrades are never useless)
@@ -6636,7 +6653,7 @@ class Brain:
         if test_writing:
             unit_tech = set(unit_tech) | {114}
         if self.age >= 4 and iron_plan:
-            unit_tech = set(unit_tech) | {38, 126, 73, 79, 57, 54, 36}
+            unit_tech = set(unit_tech) | {38, 126, 73, 79, 57, 54, 36, 27, 37, 106}
         if len(self.military()) < 4:                      # (also while Bronze researches)
             order = [tid for tid in order if tid in unit_tech or
                      self.can_afford(food=300 + K.TECHS[tid][3].get("food", 0))]
