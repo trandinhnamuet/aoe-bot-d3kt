@@ -6275,11 +6275,12 @@ class Brain:
                     if not self.any_of(bt):
                         wants.append((bt, cost, why0))
                         break
-            if self.age >= 4 and A.get("iron_plan") == "minoan":
-                if not self.any_of(gs.SIEGE_WORKSHOP):
-                    wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop: Minoan catapults + ballistas) "))
-                if not self.any_of(gs.GOVERNMENT_CENTER):
-                    wants.append((gs.GOVERNMENT_CENTER, 175, "(government centre: Alchemy + Ballistics for the bows) "))
+            if self.age >= 4 and A.get("iron_plan") == "minoan" and not self.any_of(gs.SIEGE_WORKSHOP):
+                wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop: Minoan catapults + ballistas) "))
+            if self.age >= 4 and A.get("iron_plan") in ("minoan", "elephants") and not self.any_of(gs.GOVERNMENT_CENTER):
+                wants.append((gs.GOVERNMENT_CENTER, 175, "(government centre: Alchemy + Ballistics for the archers) "))
+            if self.age >= 4 and A.get("iron_plan") in ("horse_archer", "elephants") and not self.any_of(gs.ARCHERY_RANGE):
+                wants.append((gs.ARCHERY_RANGE, 150, "(archery range: the Iron army) "))
         if self.age >= 3 and str(self.me) in os.environ.get("AOESOLO_TEST_WRITING", "").split(","):
             wants.insert(0, (gs.GOVERNMENT_CENTER, 175, "(test: Writing) "))      # (tests only: shared sight)
         if self.age >= 3 and self.horse_army():
@@ -6342,6 +6343,9 @@ class Brain:
                 if A["iron_plan"] == "scythe_chariot":
                     unit_t = gs.SCYTHE_CHARIOT if 126 in getattr(self, "techs_done", set()) else gs.CHARIOT
                     cost = dict(food=40, wood=60)
+                elif A["iron_plan"] == "elephants":
+                    unit_t = gs.ARMORED_ELEPHANT if 125 in getattr(self, "techs_done", set()) else gs.WAR_ELEPHANT
+                    cost = dict(food=170, gold=40)
                 else:
                     continue                          # (the Iron gold goes to the plan's units, not the stable)
             if self.can_afford_unit(**cost):
@@ -6380,7 +6384,8 @@ class Brain:
                            "improved_bowman": (gs.IMPROVED_BOWMAN, dict(food=40, gold=20)),
                            "composite_bowman": (gs.COMPOSITE_BOWMAN, dict(food=40, gold=20)),
                            "horse_archer": (gs.HORSE_ARCHER, dict(food=50, gold=70)),
-                           "heavy_horse_archer": (gs.HEAVY_HORSE_ARCHER, dict(food=50, gold=70))}.get(
+                           "heavy_horse_archer": (gs.HEAVY_HORSE_ARCHER, dict(food=50, gold=70)),
+                           "elephant_archer": (gs.ELEPHANT_ARCHER, dict(food=180, gold=60))}.get(
                                ranged, (gs.BOWMAN, dict(food=40, wood=20)))
             archers_now = [u for u in mil if tactics.unit_class(u.name) in ("archer", "chariot")]
             ut = self.unit_tech_needed() if self.age >= 3 else None
@@ -6637,7 +6642,10 @@ class Brain:
                      "centurion": [73, 79, 43, 48, 51, 52],
                      # Minoan (the user, 20/10): "cung A lửa" = composite bowmen with the BC's Alchemy (fire arrows) and
                      # Ballistics (shooting at moving targets); "song pháo thần" = heavy catapults AND helepolis
-                     "minoan": [57, 37, 106, 54, 36, 27, 44, 49]}.get(iron_plan, [])
+                     "minoan": [57, 37, 106, 54, 36, 27, 44, 49],
+                     # Persian / Phoenician (the user, 20/10): "song voi thần" - armored elephants + elephant archers with
+                     # the BC's Alchemy and Ballistics
+                     "elephants": [125, 37, 106, 34, 45, 50, 44, 49]}.get(iron_plan, [])
             prio = first + [x for x in prio if x not in first]
             avail = list(set(avail) | ({x for x in first if x in avail}))
             useless = set()                           # (the plan's own upgrades are never useless)
@@ -6653,7 +6661,7 @@ class Brain:
         if test_writing:
             unit_tech = set(unit_tech) | {114}
         if self.age >= 4 and iron_plan:
-            unit_tech = set(unit_tech) | {38, 126, 73, 79, 57, 54, 36, 27, 37, 106}
+            unit_tech = set(unit_tech) | {38, 126, 73, 79, 57, 54, 36, 27, 37, 106, 125}
         if len(self.military()) < 4:                      # (also while Bronze researches)
             order = [tid for tid in order if tid in unit_tech or
                      self.can_afford(food=300 + K.TECHS[tid][3].get("food", 0))]

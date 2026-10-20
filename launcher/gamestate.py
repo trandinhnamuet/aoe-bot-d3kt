@@ -55,6 +55,9 @@ PHALANX = 94             # "Y đẹp" (after Phalanx 73)
 CENTURION = 291          # "Y thần" (after Centurion 79)
 CATAPULT = 36            # "K" = Soldier-Catapult2 (after Heavy Catapult 54 - the research that upgrades the stone thrower)
 HEAVY_CATAPULT = 280     # "K thần" = Soldier-Catapult3 (after Massive Catapult 36)
+WAR_ELEPHANT = 46        # "voi" = Soldier-Elephant (stable, Bronze): 170 food 40 gold
+ARMORED_ELEPHANT = 345   # "voi thần" = Soldier-Armor_Elephant (after Armored Elephants 125)
+ELEPHANT_ARCHER = 25     # "voi tên" = Soldier-El_Archer (archery range, Iron): 180 food 60 gold
 BALLISTA = 11            # "bẹt" = Soldier-Balista: 100 wood 80 gold
 HELEPOLIS = 279          # "bẹt thần" = Soldier-Balista2 (after Helepolis 27)
 CHARIOT_ARCHER = 41      # "cung R" = "Soldier-Chariot2", archery range, needs the Wheel (28). (It was 40 - the

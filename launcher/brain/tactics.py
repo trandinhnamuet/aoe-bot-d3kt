@@ -41,8 +41,10 @@ CAMEL_CIVS = ("Palmyran", "Persian")   # the user: these field camels (their cam
 # the Iron Age army by civ (the user, 20/10): horse archers, scythe chariots, composite bowmen + catapults, centurions
 IRON_PLAN = {"Choson": "horse_archer", "Carthaginian": "horse_archer", "Yamato": "horse_archer", "Hittite": "horse_archer",
              "Assyrian": "horse_archer", "Shang": "horse_archer", "Palmyran": "horse_archer",
+             "Babylonian": "horse_archer", "Sumerian": "horse_archer",
              "Roman": "scythe_chariot", "Egyptian": "scythe_chariot",
-             "Minoan": "minoan", "Greek": "centurion", "Macedonian": "centurion"}
+             "Minoan": "minoan", "Greek": "centurion", "Macedonian": "centurion",
+             "Persian": "elephants", "Phoenician": "elephants"}   # "song voi thần": armored elephants + elephant archers
 IRON_FARMS = 35                          # the user: over 35 farms -> food + gold are saved for the Iron Age
 GOLD_OUT_AFTER_S = 900.0 # no gold mine known after this long in the game = the map's gold is gone
 ENEMY_MEMORY_S = 120.0   # an enemy soldier seen is counted for this long
@@ -165,6 +167,9 @@ def assess(b):
         elif iron_plan == "minoan":
             want_archery, ranged = True, ("composite_bowman" if 57 in done else ("improved_bowman" if 56 in done else "bowman"))
             want_siege = True
+        elif iron_plan == "elephants":
+            pick = "elephant"
+            want_archery, ranged = True, "elephant_archer"
     A = dict(mode=mode, pick=pick, our_v=round(our_v, 1), enemy_v=round(enemy_v, 1), threat_v=round(threat_v, 1),
              ours=ours, enemy=enemy, enemy_vils=enemy_vils, enemy_tc=enemy_tc, enemy_civs=civs, want_temple=want_temple,
              want_archery=want_archery, want_siege=want_siege, want_iron=want_iron, ranged=ranged,
