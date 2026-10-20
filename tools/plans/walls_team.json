@@ -1,0 +1,7 @@
+{
+ "games": [
+  {"name": "team4a", "args": ["--players", "4", "--size", "Large", "--teams", "1,1,1,1", "--minutes", "25"]},
+  {"name": "team8", "args": ["--players", "8", "--size", "Gigantic", "--teams", "1,1,1,1,1,1,1,1", "--minutes", "25"]},
+  {"name": "team4b", "args": ["--players", "4", "--size", "Large", "--teams", "1,1,1,1", "--minutes", "25"]}
+ ]
+}

@@ -2550,7 +2550,8 @@ class Brain:
             return "hunt"                            # meat at the TC first (new villagers come out right there)
         if not self.woodline_placed and wood_n >= EARLY_WOOD and counts.get("hunt", 0) < self.hunt_capacity:
             return "hunt"                            # before the first pit: elephants / gazelles brought home
-        if wood_n < self.wood_target():
+        wood_rich = self.wood_rich_food_poor()
+        if wood_n < (3 if wood_rich else self.wood_target()):
             return "wood"
         if self.age >= 2 and counts.get("farm", 0) < len(self.complete(gs.FARM)):
             return "farm"
@@ -2565,7 +2566,17 @@ class Brain:
             return "scout"                          # no food to send them to: look for more
         if self.woodline_placed and wood_n >= WOOD_HARD_CAP and counts.get("scout", 0) < 6 and self.age <= 2:
             return "scout"                          # players never put more than ~7 on wood: find food instead
+        if wood_rich and counts.get("hunt", 0) < max(self.hunt_capacity, 1):
+            return "hunt"                           # (food at any range rather than a 13th chopper - skill ffa4 P2)
         return "wood"
+
+    def wood_rich_food_poor(self):
+        """Before the Bronze click, a stock of wood with no food (skill campaign 20/10, ffa4 P2: 12 on wood, 2 268
+        wood, food 40-170 for ten minutes, Tool Age at 20:30): wood is capped at 3 choppers, food is looked for at any
+        range, and the Tool / Bronze food comes first."""
+        if self.bronze_clicked:
+            return False
+        return self.res(gs.WOOD) >= 350 and self.res(gs.FOOD) < 350
 
     def known_gold(self):
         return [o for o in self.s.gaia if o.type == gs.GOLD_MINE and o.amount > 0]
@@ -3422,6 +3433,11 @@ class Brain:
         # before the Tool click the players keep 6-7 on wood whatever the stock: more choppers than
         # that are villagers without food work (night4: 17 on wood, no herd known, nothing searched)
         wt = 7 if not self.tool_clicked else min(self.wood_target(), WOOD_HARD_CAP)
+        if self.wood_rich_food_poor():
+            wt = 3                                   # (wood banked, food short: the choppers look for food)
+            if not self.food_desperate and len(self.s.villagers) >= 12:
+                self.say("WATCHDOG %d wood banked, %d food: food at any range, 3 on wood" % (self.res(gs.WOOD), self.res(gs.FOOD)))
+            self.food_desperate = True
         need = len(self.s.villagers) - wt - 2
         cap = self.hunt_capacity + self.berry_capacity()
         short = self.pit_finished() and not self.bronze_clicked and (
