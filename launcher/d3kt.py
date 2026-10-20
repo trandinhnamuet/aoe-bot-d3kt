@@ -2579,6 +2579,9 @@ class Brain:
         range, and the Tool / Bronze food comes first."""
         if self.bronze_clicked:
             return False
+        if not self.tool_clicked:
+            # (allied games 20/10: food sat at 400 waiting for the 500 of the Tool click with 14-18 on wood)
+            return self.res(gs.WOOD) >= 400 and self.res(gs.FOOD) < 500
         return self.res(gs.WOOD) >= 350 and self.res(gs.FOOD) < 350
 
     def known_gold(self):
