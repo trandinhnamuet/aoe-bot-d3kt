@@ -245,6 +245,24 @@ def open_connection(gp, name=None, log=print):
 LIST_CANCEL = (1055, 728)
 
 
+def rename_on_list(gp, name, log=print):
+    """A parked bot (game list) goes back to the connection screen, takes a new name, and comes back in."""
+    if current_screen(gp) == "MP Setup Screen":
+        _click(gp, LIST_CANCEL, 0.2)
+        wait_screen(gp, "Join Screen", 5, poll=0.05)
+    _click(gp, LIST_CANCEL, 0.2)
+    if not wait_screen(gp, "MP Startup Screen", 5, poll=0.05):
+        raise RuntimeError("connection screen not reached (screen=%s)" % current_screen(gp))
+    set_name_field(gp, name)
+    time.sleep(0.2)
+    _click(gp, CONN_TCPIP, 0.2)
+    for _ in range(3):
+        _click(gp, CONN_OK, 0.2)
+        if wait_screen(gp, "Join Screen", 8, poll=0.05):
+            return
+    raise RuntimeError("game list screen not reached (screen=%s)" % current_screen(gp))
+
+
 def reopen_list(gp, log=print):
     """Back from the game list to the connection screen and in again (fresh DirectPlay session)."""
     if current_screen(gp) == "MP Setup Screen":

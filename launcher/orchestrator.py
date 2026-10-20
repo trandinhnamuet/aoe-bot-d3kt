@@ -5,6 +5,7 @@ import threading
 import time
 
 import aoemem
+import botnames
 import brainproc
 import d3kt
 import gamewin as gw
@@ -234,6 +235,28 @@ class Session:
     def _civ(self, c):
         return c if c else lobby.CIV_RANDOM          # "Random" in the lobby: the game rolls the civ itself
 
+    def _name_bot(self, b, i, cfg, used):
+        """Bot i gets its civ (a random one is drawn here) and the name "<Civ> <noun>"; a parked bot with another
+        name re-enters the game list under the new one."""
+        b.bot_index = i
+        civs = list(cfg.ai_civs)
+        if not civs[i]:
+            civs[i] = botnames.random_civ()
+            cfg.ai_civs = civs
+        name = botnames.name_for(civs[i], used | set(self.pool.names_in_use))
+        used.add(name)
+        old = getattr(b, "bot_name", None)
+        if name != old:
+            try:
+                lobby.rename_on_list(b, name, log=self.log)
+                with self.pool.lock:
+                    self.pool.names_in_use.discard(old)
+                    self.pool.names_in_use.add(name)
+                b.bot_name = name
+                self.log("bot %s renamed %s (civ %s)" % (old, name, lobby.CIVS[civs[i] - 1]))
+            except Exception as e:  # noqa: BLE001
+                self.log("rename of %s to %s failed: %r (keeps its name)" % (old, name, e))
+
     def ensure_bot_exe(self):
         ensure_bot_exe(self.game_dir)
 
@@ -279,6 +302,10 @@ class Session:
                 gw.focus(pl.hwnd)
                 locked = pl.hook.cmd("fglock 1").startswith("ok")
             self.bots = self.pool.take(cfg.num_ai)
+            # names by civ (the user, 20/10: "Yamato Samurai"): a random civ is drawn here so the name fits it
+            used = set()
+            for i, b in enumerate(self.bots):
+                self._name_bot(b, i, cfg, used)
             # all bots join at once (short EnumSessions timeout): the host takes simultaneous joins in
             # ~2 s, one by one it needs ~2 s each. Any bot the HOST does not list afterwards is retried.
             ths = [threading.Thread(target=self._try_join, args=(b,), daemon=True) for b in self.bots]
@@ -315,6 +342,7 @@ class Session:
                         b.kill()
                         self.pool.release_names([b])
                         b = self.bots[i] = self.pool.take(1)[0]
+                        self._name_bot(b, i, cfg, {getattr(x, "bot_name", "") for x in self.bots if x is not b})
                     elif attempt == 2:
                         try:
                             lobby.reopen_list(b, log=self.log)     # fresh DirectPlay session, then join again
@@ -329,7 +357,7 @@ class Session:
                     raise RuntimeError("the room never saw %s" % getattr(self.bots[i], "bot_name", "a bot"))
             # 3. civilisations, teams, ready ("AI k" in the room gets the launcher's AI k civ, whatever seat)
             self.slots = {gp.pid: lobby.my_player_number(gp) - 1 for gp in self.bots + [pl]}
-            self.bots.sort(key=lambda b: (len(getattr(b, "bot_name", "")), getattr(b, "bot_name", "")))
+            self.bots.sort(key=lambda b: getattr(b, "bot_index", 0))      # (bot i plays the launcher's AI i civ)
             together = cfg.ai_team_mode == "together"
             teams = list(getattr(cfg, "teams", None) or [])     # (tests: [player, AI 1, AI 2, ...], 0 = none)
             lobby.host_set_civ(pl, self.slots[pl.pid], self._civ(cfg.player_civ), log=self.log)
