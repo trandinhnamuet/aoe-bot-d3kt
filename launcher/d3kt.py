@@ -2461,12 +2461,19 @@ class Brain:
                 # 20-90 wood, one farm finished 120 s after the market)
                 need += 75 * max(0, 4 - len(self.any_of(gs.FARM)))
             if self.complete(gs.MARKET) and not self.food_left():
-                need += 150                              # more farms are coming
+                # the natural food is gone: the hunters become farmers, 8 farms worth of wood is needed now
+                # (iron60 20/10: 0-1 farms and 6-90 wood for ten minutes of the Tool Age, Bronze 5 min late)
+                need += 75 * max(2, 8 - len(self.any_of(gs.FARM)))
             wood = self.res(gs.WOOD)
+            if self.complete(gs.MARKET) and not self.food_left() and wood < need - 150:
+                return 12
             return 10 if wood < need - 150 else (7 if wood < need else 5)
         wood = self.res(gs.WOOD)
         if self.age >= 3:
-            return 4 if wood > 500 else (6 if wood > 200 else 8)   # farms, houses, stables
+            # farms, houses, stables - with 60 villagers 8 choppers cannot feed 35 farms (iron60 20/10: wood 7-220
+            # from minute 30 to 45, the farms came one a minute)
+            base = max(8, len(self.s.villagers) // 5)
+            return 4 if wood > 500 else (6 if wood > 200 else base)
         return 4 if wood > 600 else (6 if wood > 250 else 8)
 
     def food_left(self):
@@ -2538,7 +2545,11 @@ class Brain:
 
     def allocate(self, v, counts):
         wood_n = counts.get("wood", 0)
-        gold_want = (2 + GOLD_PER_STABLE * max(1, len(self.complete(gs.STABLE)))) if self.age >= 3 else 6
+        gold_want = (2 + GOLD_PER_STABLE * max(1, len(self.complete(gs.STABLE)))) if self.age >= 3 else 3
+        if self.age >= 3 and len(self.s.villagers) < MAX_VILLAGERS:
+            # the town still grows: the miners stay behind the farmers (iron60 20/10: 7 miners and 945 gold banked
+            # while the food sat at 11-60 and the TC made no villager for ten minutes)
+            gold_want = min(gold_want, max(3, counts.get("farm", 0) // 2))
         if (self.tactics or {}).get("iron_saving") and self.res(gs.GOLD) < 800:
             gold_want = max(gold_want, 12)       # the 800 gold of the Iron Age come in time (iron70: 7 miners, 25 gold)
         if self.bronze_clicked and counts.get("gold", 0) < gold_want and self.known_gold():

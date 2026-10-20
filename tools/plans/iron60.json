@@ -1,0 +1,1 @@
+{"games": [{"name": "iron60", "env": {"AOESOLO_SEED": "999"}, "args": ["--players", "4", "--size", "Large", "--teams", "1,1,1,1", "--minutes", "60"]}]}

@@ -1,5 +1,5 @@
-"""Summary of a campaign (tools/campaign.py): per game and per player the age clicks, villagers / army /
-buildings at minutes 10, 15, 20, 25, deaths, tick times, and the CPU use while the game ran.
+"""Summary of a campaign (tools/campaign.py): per game and per player the age clicks, villagers / farms / army /
+buildings at minutes 10, 15, 20, 25, 30, 35 (farms also at the end), deaths, tick times, and the CPU use while the game ran.
 
     .venv/Scripts/python tools/campaign_report.py <tag> [out.json]"""
 import csv
@@ -12,7 +12,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, "arena")
 tag = sys.argv[1]
-MARKS = (10, 15, 20, 25)
+MARKS = (10, 15, 20, 25, 30, 35)
 
 
 def per_player(text, me):
@@ -41,6 +41,7 @@ def per_player(text, me):
         "player": me,
         "tool": click(r"Tool Age clicked"), "bronze": click(r"Bronze Age clicked"), "iron": click(r"Iron Age clicked"),
         "vil": {m: at(m, "vil") for m in MARKS}, "army": {m: at(m, "army") for m in MARKS}, "bldg": {m: at(m, "bldg") for m in MARKS},
+        "farms": {m: at(m, "farms") for m in MARKS}, "farms_end": at(99, "farms"),       # (the user, 20/10: farms per bot)
         "age_end": at(99, "age"),
         "deaths": len(re.findall(pre + r"DEATH villager", text)),
         "soldier_deaths": len(re.findall(pre + r"SOLDIERDEATH", text)),
@@ -90,6 +91,7 @@ if len(sys.argv) > 2:
 for g in games:
     print("== %s (%s) speed x%s%s  cpu %s" % (g["name"], g["args"], g.get("speed"), " STOPPED" if g.get("stopped") else "", g.get("cpu")))
     for p in g["players"]:
-        print("  P%d tool %s bronze %s iron %s | vil %s | army %s | bldg %s | deaths %d sold %d | tick %s/%s ms slow %d | end %ds" % (
-            p["player"], p["tool"], p["bronze"], p["iron"], [p["vil"][m] for m in MARKS], [p["army"][m] for m in MARKS],
-            [p["bldg"][m] for m in MARKS], p["deaths"], p["soldier_deaths"], p["tick_avg_ms"], p["tick_max_ms"], p["slow_ticks"], p["last_s"]))
+        print("  P%d tool %s bronze %s iron %s | vil %s | farms %s end %s | army %s | bldg %s | deaths %d sold %d | tick %s/%s ms slow %d | end %ds" % (
+            p["player"], p["tool"], p["bronze"], p["iron"], [p["vil"][m] for m in MARKS], [p["farms"][m] for m in MARKS], p["farms_end"],
+            [p["army"][m] for m in MARKS], [p["bldg"][m] for m in MARKS], p["deaths"], p["soldier_deaths"], p["tick_avg_ms"],
+            p["tick_max_ms"], p["slow_ticks"], p["last_s"]))
