@@ -3051,7 +3051,10 @@ class Brain:
         free ground in the working area, with room for farms around it and without blocking the villagers' ways;
         inside the wall first, outside it around the town otherwise."""
         t = self.now()
-        if t - getattr(self, "_fg_t", -99) < 20 or self.pending_of(gs.GRANARY):
+        # (a granary foundation nobody finishes - iron2 20/10, Palmyran: a berry granary pending for 40 minutes, 17 farmers
+        #  for 11 farms and 4 500 wood - does not block the farm granary once it is 150 s old)
+        fresh_pending = any(p.btype == gs.GRANARY and t - p.t < 150 for p in self.pending)
+        if t - getattr(self, "_fg_t", -99) < 20 or fresh_pending:
             return False
         self._fg_t = t
         tc = self.tc()
@@ -6660,7 +6663,10 @@ class Brain:
                      "elephants": [125, 37, 106, 34, 45, 50, 44, 49]}.get(iron_plan, [])
             prio = first + [x for x in prio if x not in first]
             avail = list(set(avail) | ({x for x in first if x in avail}))
-            useless = set()                           # (the plan's own upgrades are never useless)
+            # the plan's own upgrades are never useless; the temple's techs are, unless priests are wanted
+            # (iron2 20/10: the Choson bot bought Mysticism, Astrology, Polytheism right after the Iron click)
+            useless = set() if (self.tactics or {}).get("want_temple") else {18, 19, 20, 21, 22, 23, 24, 119, 120}
+            useless |= {63, 64, 65, 66, 77}
         if (self.tactics or {}).get("iron_saving"):
             # (over 35 farms: food and gold go to the Iron Age - only wood techs meanwhile)
             avail = [x for x in avail if not K.TECHS[x][3].get("gold") and K.TECHS[x][3].get("food", 0) <= 120]
