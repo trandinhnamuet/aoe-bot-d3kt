@@ -46,8 +46,8 @@ class Seat:
         self.kind = "you" if index == 0 else "empty"          # you | ai | empty
         self.civ = tk.StringVar(value=CIV_CHOICES[0])
         self.team = tk.StringVar(value="—")
-        self.card = T.Card(parent, pad=8)
-        self.card.pack(fill="x", pady=3)
+        self.card = T.Card(parent, pad=5)
+        self.card.pack(fill="x", pady=2)
         self.card.columnconfigure(2, minsize=190, weight=1)   # (name column: civ / team line up across the seats)
         self.swatch = tk.Canvas(self.card, width=16, height=16, bg=T.BG2, highlightthickness=0)
         self.swatch.create_oval(1, 1, 15, 15, fill=T.PLAYER_COLOURS[index], outline="")
