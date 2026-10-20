@@ -6665,10 +6665,13 @@ class Brain:
                      "elephants": [125, 37, 106, 34, 45, 50, 44, 49]}.get(iron_plan, [])
             prio = first + [x for x in prio if x not in first]
             avail = list(set(avail) | ({x for x in first if x in avail}))
-            # the plan's own upgrades are never useless; the temple's techs are, unless priests are wanted
-            # (iron2 20/10: the Choson bot bought Mysticism, Astrology, Polytheism right after the Iron click)
-            useless = set() if (self.tactics or {}).get("want_temple") else {18, 19, 20, 21, 22, 23, 24, 119, 120}
-            useless |= {63, 64, 65, 66, 77}
+        if (self.age >= 4 or getattr(self, "iron_clicked", False)) and not (self.tactics or {}).get("want_temple"):
+            # the temple's techs are useless without priests (iron2 / iron60 20/10: Choson and Persian bought
+            # Mysticism, Astrology, Jihad, Fanaticism the moment the Iron click freed the gold; the earlier filter
+            # was assigned after its use and never applied)
+            temple = {18, 19, 20, 21, 22, 23, 24, 119, 120}
+            prio = [x for x in prio if x not in temple]
+            avail = [x for x in avail if x not in temple]
         if (self.tactics or {}).get("iron_saving"):
             # (over 35 farms: food and gold go to the Iron Age - only wood techs meanwhile)
             avail = [x for x in avail if not K.TECHS[x][3].get("gold") and K.TECHS[x][3].get("food", 0) <= 120]
