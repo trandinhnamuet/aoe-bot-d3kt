@@ -289,6 +289,13 @@ class Session:
                 else:
                     pl = self._start_player_room()
             self.player = pl
+            # the player's own civ (Random included) the moment the room opens, not after the bots join (the user,
+            # 20/10: the room showed another civ first and switched to Random later)
+            try:
+                me_slot = (lobby.my_player_number(pl) or 1) - 1
+                lobby.host_set_civ(pl, me_slot, self._civ(cfg.player_civ), log=self.log)
+            except Exception as e:  # noqa: BLE001
+                self.log("early civ set failed: %r" % (e,))
             w, h = RESOLUTIONS.get(cfg.resolution, (1366, 768))
             if not getattr(pl, "menu_fixed", False):
                 procs.set_menu_scale(pl, self.game_dir)
