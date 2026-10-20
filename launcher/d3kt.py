@@ -780,6 +780,19 @@ class Brain:
                 if spot and b and self.start_build(gs.HOUSE, spot, b, "(watchdog: pop capped) " + why):
                     self.say("WATCHDOG pop capped %.0f s without a house: built one" % (t - wd["capped"]))
                 wd.pop("capped", None)
+            elif t - wd["capped"] > 8 and self.res(gs.WOOD) < 30 and t - getattr(self, "_wd_wood_t", -99) > 20:
+                # no wood for the house and nobody chopping: a berry picker (else a hunter) is freed, the allocator
+                # sends it to wood (iron35 20/10: 20 wood for nine minutes, every villager on berries and elephants)
+                self._wd_wood_t = t
+                cutters = sum(1 for v in self.s.villagers if self.role_name(v.id) == "wood")
+                if cutters < 2:
+                    pick = next((v for r in ("berry", "berry2", "hunt") for v in self.s.villagers
+                                 if self.role_name(v.id) == r and v.id not in self.task_owned()), None)
+                    if pick is not None:
+                        self.hunt_site.pop(pick.id, None)
+                        self.role.pop(pick.id, None)
+                        self.say("WATCHDOG pop capped %.0f s with %d wood and %d cutters: villager #%d goes to wood"
+                                 % (t - wd["capped"], self.res(gs.WOOD), cutters, pick.id))
         else:
             wd.pop("capped", None)
         # 1b. the first pit was "placed" but never appeared
@@ -2360,10 +2373,10 @@ class Brain:
                 c = K.TECHS[ut][3]
                 if not self.can_afford(food=c.get("food", 0) + self.vil_cost, wood=c.get("wood", 0)):
                     want = False
-            if self.age >= 3:
+            if self.age >= 3 and not self.growing():
                 # the user: the army first. Every military building of ours (stables, ranges, academies)
                 # busy, or the idle ones still paid for, before a villager; once 8 soldiers are out the TC
-                # takes every 3rd chance anyway
+                # takes every 3rd chance anyway (not while the town grows with no enemy soldier in sight)
                 mil_b = [b for bt in (gs.STABLE, gs.ARCHERY_RANGE, gs.ACADEMY) for b in self.complete(bt)]
                 idle_b = [b for b in mil_b if not self.r.producing(b)]
                 self._tc_turn = getattr(self, "_tc_turn", 0) + 1
@@ -2472,9 +2485,16 @@ class Brain:
         if self.age >= 3:
             # farms, houses, stables - with 60 villagers 8 choppers cannot feed 35 farms (iron60 20/10: wood 7-220
             # from minute 30 to 45, the farms came one a minute)
-            base = max(8, len(self.s.villagers) // 5)
+            base = max(8, len(self.s.villagers) // (3 if self.growing() else 5))
             return 4 if wood > 500 else (6 if wood > 200 else base)
         return 4 if wood > 600 else (6 if wood > 250 else 8)
+
+    def growing(self):
+        """Bronze with the town below 60 villagers and no enemy soldier in sight (the user, 20/10: the Iron Age
+        before minute 32): the economy comes before the army - villagers, farms, wood - until the town is grown."""
+        A0 = self.tactics or {}
+        return (self.age >= 3 and len(self.s.villagers) < MAX_VILLAGERS and not A0.get("threat_v")
+                and not getattr(self, "_raiders", None) and not A0.get("iron_saving"))
 
     def food_left(self):
         """Natural food still worth sending villagers to (hunts or berries)."""
@@ -2548,14 +2568,20 @@ class Brain:
         gold_want = (2 + GOLD_PER_STABLE * max(1, len(self.complete(gs.STABLE)))) if self.age >= 3 else 3
         if self.age >= 3 and len(self.s.villagers) < MAX_VILLAGERS:
             # the town still grows: the miners stay behind the farmers (iron60 20/10: 7 miners and 945 gold banked
-            # while the food sat at 11-60 and the TC made no villager for ten minutes)
+            # while the food sat at 11-60 and the TC made no villager for ten minutes); with no enemy army in
+            # sight (the user, 20/10: the Iron Age before minute 32) three miners are enough until the town is grown
             gold_want = min(gold_want, max(3, counts.get("farm", 0) // 2))
+            if self.growing():
+                gold_want = 3
         if (self.tactics or {}).get("iron_saving") and self.res(gs.GOLD) < 800:
             gold_want = max(gold_want, 12)       # the 800 gold of the Iron Age come in time (iron70: 7 miners, 25 gold)
         if self.bronze_clicked and counts.get("gold", 0) < gold_want and self.known_gold():
             return "gold"
+        nvil = len(self.s.villagers)
+        if wood_n < (2 if nvil < 10 else 4) and nvil >= 6:
+            return "wood"                            # houses and the first pit need wood whatever else is going on
         leads = sum(1 for (k, x, y, st) in self.sites if st in ("provoke", "run", "push"))
-        if leads and len(self.s.villagers) >= 7 and counts.get("hunt", 0) < leads:
+        if leads and nvil >= 7 and counts.get("hunt", 0) < leads:
             return "hunt"                            # one lurer / pusher per elephant / gazelle, before anything else
         tc = self.tc()
         home_meat = tc and any(st in ("eat", "pushed", "kill") and math.hypot(x - tc.x, y - tc.y) <= 12
