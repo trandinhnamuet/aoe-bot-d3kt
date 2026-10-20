@@ -1029,7 +1029,9 @@ class Brain:
         idle = "%d(%s)" % (sum(idle_roles.values()), ",".join("%s:%d" % kv for kv in sorted(idle_roles.items())))
         tk = getattr(self, "tick_times", [])
         acc = getattr(self, "tc_idle_acc", {})
-        tcs = "tc_food=%.0f tc_pop=%.0f " % (acc.get("food", 0), acc.get("pop", 0))
+        tcs = "tc_food=%.0f tc_pop=%.0f tc_done=%.0f gw=%s wt=%s wl=%d grow=%d " % (
+            acc.get("food", 0), acc.get("pop", 0), acc.get("done", 0), getattr(self, "_dbg_gw", "-"),
+            self.wood_target(), bool(self.woodline_placed), self.growing())
         self.tc_idle_acc = {}
         hs = {}
         for h in self.herds.values():
@@ -2575,6 +2577,7 @@ class Brain:
                 gold_want = 3
         if (self.tactics or {}).get("iron_saving") and self.res(gs.GOLD) < 800:
             gold_want = max(gold_want, 12)       # the 800 gold of the Iron Age come in time (iron70: 7 miners, 25 gold)
+        self._dbg_gw = gold_want
         if self.bronze_clicked and counts.get("gold", 0) < gold_want and self.known_gold():
             return "gold"
         nvil = len(self.s.villagers)

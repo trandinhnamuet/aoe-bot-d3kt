@@ -108,13 +108,13 @@ class BotPool:
         self.closed = False
 
     def _identity(self):
-        """A civ drawn now and the name for it ("Yamato Samurai"): the bot parks under its final name, so a
-        Random seat needs no rename when the room opens (names2-4 20/10: six bots re-entering the list at once
-        left one of them blind to the room for 8 s; a bot parked for long always sees it)."""
-        civ = botnames.random_civ()
-        name = botnames.name_for(civ, self.names_in_use)
+        """The bot parks under its final name for a Random seat - a generic "<Title> <Animal>" (the user, 20/10:
+        a Random seat shows Random in the room, the game rolls the civ) - so no rename is needed when the room
+        opens (names2-4 20/10: bots re-entering the list at once left one of them blind to the room for 8 s).
+        civ 0 = Random; a seat with a chosen civ renames the bot "<Civ> <noun>" before the room opens."""
+        name = botnames.generic_name(self.names_in_use)
         self.names_in_use.add(name)
-        return civ, name
+        return 0, name
 
     def ensure(self, n):
         with self.lock:
@@ -240,14 +240,11 @@ class Session:
     def _plan_name(self, b, i, cfg, used):
         """Bot i gets its civ (a random one is drawn here) and the name "<Civ> <noun>" (returned, not yet set)."""
         b.bot_index = i
-        civs = list(cfg.ai_civs)
-        if not civs[i]:
-            civs[i] = getattr(b, "bot_civ", 0) or botnames.random_civ()   # Random: the civ the bot parked with
-            cfg.ai_civs = civs
-        if civs[i] == getattr(b, "bot_civ", None) and getattr(b, "bot_name", None):
+        civ = cfg.ai_civs[i]                      # 0 = Random: the room shows Random, the game rolls the civ
+        if civ == getattr(b, "bot_civ", 0) and getattr(b, "bot_name", None):
             used.add(b.bot_name)
-            return b.bot_name                     # parked under this name already: nothing to rename
-        name = botnames.name_for(civs[i], used | set(self.pool.names_in_use))
+            return b.bot_name                     # parked under the right name already: nothing to rename
+        name = botnames.generic_name(used | set(self.pool.names_in_use)) if not civ else             botnames.name_for(civ, used | set(self.pool.names_in_use))
         used.add(name)
         return name
 
@@ -264,7 +261,8 @@ class Session:
                 self.pool.names_in_use.discard(old)
                 self.pool.names_in_use.add(name)
             b.bot_name, b.bot_civ = name, cfg.ai_civs[b.bot_index]
-            self.log("bot %s renamed %s (civ %s)" % (old, name, lobby.CIVS[cfg.ai_civs[b.bot_index] - 1]))
+            civ = cfg.ai_civs[b.bot_index]
+            self.log("bot %s renamed %s (civ %s)" % (old, name, lobby.CIVS[civ - 1] if civ else "Random"))
         except Exception as e:  # noqa: BLE001
             self.log("rename of %s to %s failed: %r (keeps its name)" % (old, name, e))
 
@@ -351,7 +349,7 @@ class Session:
             # all bots join at once (short EnumSessions timeout): the host takes simultaneous joins in
             # ~2 s, one by one it needs ~2 s each. Any bot the HOST does not list afterwards is retried.
             # (a bot fresh from a rename may still be enumerating: up to 4 looks at the list, ~3 s each)
-            ths = [threading.Thread(target=self._try_join, args=(b, 4), daemon=True) for b in self.bots]
+            ths = [threading.Thread(target=self._try_join, args=(b, 6), daemon=True) for b in self.bots]
             for th in ths:
                 th.start()
             for th in ths:

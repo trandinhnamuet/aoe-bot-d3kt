@@ -310,7 +310,9 @@ class App:
                 self.map_size.set(size)                   # (the map size follows the player count; it can still be changed)
                 self._last_n = n
             self.size_note.configure(text="%d người chơi → bản đồ %s" % (1 + n, size))
-        if self.pool is not None:
+        if self.pool is not None and not self.playing:
+            # (never during a match: the user's 1v7 of 1.2.21 started seven new hidden games nine seconds after
+            #  the room was ready - fifteen game processes while the player's game loaded)
             threading.Thread(target=self.pool.ensure, args=(n,), daemon=True).start()
         self.autosave()
 

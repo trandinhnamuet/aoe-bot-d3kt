@@ -418,7 +418,10 @@ def fast_session_list(gp, ms=500):
     """Bots only: 'Show games' blocks the game for the whole EnumSessions timeout (4 s); on 127.0.0.1
     the room answers at once, so a short timeout lists it just as well."""
     import struct
-    if gp.mem.read(ENUM_TIMEOUT_IMM - 1, 5) in (b"h" + struct.pack("<I", 4000), b"h" + struct.pack("<I", ms)):
+    cur = gp.mem.read(ENUM_TIMEOUT_IMM - 1, 5)
+    if cur[:1] == b"h" and struct.unpack("<I", cur[1:])[0] in (4000, 500, 1000, 2000, 3000, ms):
+        # (any value we set before counts too: the 3 s retry window never applied once 500 ms was in - the user's
+        #  1v7 of 1.2.21: two bots "no room listed" four times within 3 s, 8 processes answering on 127.0.0.1)
         return gp.mem.write(ENUM_TIMEOUT_IMM, struct.pack("<I", ms))
     return False
 
@@ -437,7 +440,7 @@ def join_from_list(gp, log=print, retries=8):
         _click(gp, GAMES_SHOW, 0.05)            # returns once the session list is enumerated
         if listed_sessions(gp) == 0:
             log("no room listed yet (attempt %d)" % (attempt + 1))
-            fast_session_list(gp, 3000)        # enumeration got slow on this machine: wait longer for answers
+            fast_session_list(gp, 1000 + 500 * attempt)   # a longer enumeration window each look (8 processes answer)
             time.sleep(0.3)
             continue
         _click(gp, GAMES_FIRST_ROW, 0.05)
