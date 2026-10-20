@@ -2322,7 +2322,7 @@ class Brain:
             return
         A = self.tactics
         if (A and A.get("want_iron") and self.age == 3 and not getattr(self, "iron_clicked", False)
-                and self.complete(gs.TEMPLE) and self.complete(gs.SIEGE_WORKSHOP) and self.can_afford(food=1000, gold=800)):
+                and self.bronze_buildings() >= 2 and self.can_afford(food=1000, gold=800)):
             self.g.research(tc, gs.TECH_IRON_AGE)
             self.iron_clicked = True
             self.last_train = t
@@ -3042,7 +3042,75 @@ class Brain:
                 self.start_build(gs.FARM, spot, [v], "(farm)")
                 self.farms_built = getattr(self, "farms_built", 0) + 1
                 return
+            if self.age >= 3 and self.can_afford(wood=120 + 75 + reserve):
+                self.farm_granary(v)                 # (the user, 20/10: no good spot left - a new granary + farms)
         return self.work_wood(v)
+
+    def farm_granary(self, v):
+        """The user (20/10): when the good farm spots (by the TC and the granaries) are gone, a new granary goes on
+        free ground in the working area, with room for farms around it and without blocking the villagers' ways;
+        inside the wall first, outside it around the town otherwise."""
+        t = self.now()
+        if t - getattr(self, "_fg_t", -99) < 20 or self.pending_of(gs.GRANARY):
+            return False
+        self._fg_t = t
+        tc = self.tc()
+        if tc is None:
+            return False
+        grans = self.any_of(gs.GRANARY)
+        kc = self.keep_clear()
+        best, best_s = None, -1e9
+        for x0 in range(int(tc.x) - 28, int(tc.x) + 27, 2):
+            for y0 in range(int(tc.y) - 28, int(tc.y) + 27, 2):
+                d = math.hypot(x0 + 1.5 - tc.x, y0 + 1.5 - tc.y)
+                if d < FARM_RING + 4 or d > 28:
+                    continue
+                if any(math.hypot(g0.x - x0 - 1.5, g0.y - y0 - 1.5) < 10 for g0 in grans):
+                    continue                             # (another granary's farm ring)
+                if not self.explored_rect(x0, y0, 3) or not self.footprint_ok(gs.GRANARY, x0, y0, kc):
+                    continue
+                # farm slots around it (the farm_spot geometry: 3x3 farms FARM_GAP tiles off the granary)
+                slots = 0
+                for fx in range(x0 - 3 - FARM_GAP, x0 + 3 + FARM_GAP + 1):
+                    for fy in range(y0 - 3 - FARM_GAP, y0 + 3 + FARM_GAP + 1):
+                        gx = max(x0 - (fx + 3), fx - (x0 + 3), 0)
+                        gy = max(y0 - (fy + 3), fy - (y0 + 3), 0)
+                        if max(gx, gy) == FARM_GAP and self.grid.free(fx, fy, 3, 0) and self.explored_rect(fx, fy, 3):
+                            slots += 1
+                if slots < 5:
+                    continue
+                inside = self.wall_inside(x0 + 1.5, y0 + 1.5)
+                score = slots * 6 + (120 if inside else 0) - d * 2
+                if score > best_s:
+                    best, best_s = (x0, y0, slots, inside), score
+        if best is None:
+            return False
+        x0, y0, slots, inside = best
+        if not self.farm_paths_ok_granary(x0, y0):
+            return False
+        spot = (x0 + 1.5, y0 + 1.5)
+        if not self.g.can_place(self.me, gs.GRANARY, *spot):
+            return False
+        self.start_build(gs.GRANARY, spot, [v] + self.builders_near(1, *spot), "(farm granary: %d farm slots, %s the wall)" % (
+            slots, "inside" if inside else "outside"))
+        return True
+
+    def farm_paths_ok_granary(self, x0, y0):
+        """The new granary must leave the TC's exits and stay reachable from the TC."""
+        pm = self.pm.copy()
+        pm.block_rect(x0, y0, x0 + 3, y0 + 3)
+        tc = self.tc()
+        tr = pathing.rect_of(tc.x, tc.y, 3)
+        exits = pm.ring_tiles(*tr)
+        if not exits:
+            return False
+        far = pm.bfs(exits, max_cost=600)
+        ring = pm.ring_tiles(x0, y0, x0 + 3, y0 + 3)
+        if not any(far[ty * pm.W + tx] >= 0 for tx, ty in ring):
+            return False
+        return any(far[ty * pm.W + tx] >= 0 and math.hypot(tx - tc.x, ty - tc.y) >= 10
+                   for ty in range(max(0, int(tc.y) - 12), min(pm.H, int(tc.y) + 13))
+                   for tx in range(max(0, int(tc.x) - 12), min(pm.W, int(tc.x) + 13)))
 
     def target_counts(self):
         """{target ptr: number of our villagers whose current action targets it}, once per snapshot."""
@@ -3062,7 +3130,9 @@ class Brain:
         """A farm one house foundation (2 tiles) away from a granary or the TC, reachable by a short
         walk, never closing the TC's exits."""
         tc = self.tc()
-        drops = [g0 for g0 in self.complete(gs.GRANARY) if tc and g0.dist(tc.x, tc.y) <= 15] + [tc]
+        drops = [g0 for g0 in self.complete(gs.GRANARY) if tc and (g0.dist(tc.x, tc.y) <= 15 or
+                 (self.age >= 3 and g0.dist(tc.x, tc.y) <= 30 and
+                  sum(1 for b in self.s.gaia if b.type == gs.FORAGE and b.amount > 0 and b.dist(g0.x, g0.y) < 7) <= 2))] + [tc]
         cands = []
         for d in drops:
             if d is None:
@@ -6195,12 +6265,18 @@ class Brain:
                 wants.append((gs.TEMPLE, 200, "(temple: enemy priests) "))
             if A.get("want_archery"):
                 wants.append((gs.ARCHERY_RANGE, 150, "(archery: enemy infantry) "))
-            if A.get("want_siege") or A.get("want_iron"):
+            if A.get("want_siege"):
                 if not self.any_of(gs.ARCHERY_RANGE):
                     wants.append((gs.ARCHERY_RANGE, 150, "(BA opens BK) "))
                 wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop) "))
-            if A.get("want_iron") and not self.any_of(gs.TEMPLE):
-                wants.append((gs.TEMPLE, 200, "(temple: second Bronze building for Iron) "))
+            if A.get("want_iron") and self.bronze_buildings() < 2:
+                # two Bronze buildings of any kind: the Government Center (Nobility) first, then a temple
+                for bt, cost, why0 in ((gs.GOVERNMENT_CENTER, 175, "(government centre: for Iron) "), (gs.TEMPLE, 200, "(temple: for Iron) ")):
+                    if not self.any_of(bt):
+                        wants.append((bt, cost, why0))
+                        break
+            if self.age >= 4 and A.get("iron_plan") == "minoan" and not self.any_of(gs.SIEGE_WORKSHOP):
+                wants.append((gs.SIEGE_WORKSHOP, 200, "(siege workshop: Minoan catapults) "))
         if self.age >= 3 and str(self.me) in os.environ.get("AOESOLO_TEST_WRITING", "").split(","):
             wants.insert(0, (gs.GOVERNMENT_CENTER, 175, "(test: Writing) "))      # (tests only: shared sight)
         if self.age >= 3 and self.horse_army():
@@ -6243,6 +6319,13 @@ class Brain:
         may_fight = self.age >= 3                 # (the user: no Stone / Tool age army, even when attacked)
         if not may_fight or self.res(gs.HEADROOM) < 1:
             return
+        A0 = self.tactics or {}
+        if A0.get("iron_saving") and A0.get("threat_v", 0) == 0:
+            if t - getattr(self, "_iron_save_say", 0) > 120:
+                self._iron_save_say = t
+                self.say("saving for the Iron Age (%d farms): no new soldiers, food %d / 1000, gold %d / 800" % (
+                    A0.get("farms", 0), self.res(gs.FOOD), self.res(gs.GOLD)))
+            return                                    # (the user: over 35 farms the food and gold go to the Iron Age)
         for i, b in enumerate(st):
             if self.r.producing(b):
                 continue
@@ -6252,6 +6335,12 @@ class Brain:
                             "scout": (gs.SCOUT, dict(food=100))}.get(A["pick"], (gs.CAVALRY, dict(food=70, gold=80)))
             if self.age < 3:
                 unit_t, cost = gs.SCOUT, dict(food=100)
+            if self.age >= 4 and A.get("iron_plan"):
+                if A["iron_plan"] == "scythe_chariot":
+                    unit_t = gs.SCYTHE_CHARIOT if 126 in getattr(self, "techs_done", set()) else gs.CHARIOT
+                    cost = dict(food=40, wood=60)
+                else:
+                    continue                          # (the Iron gold goes to the plan's units, not the stable)
             if self.can_afford_unit(**cost):
                 self.g.train(b, unit_t)
                 if A["pick"] in ("chariot", "scout") and A.get("gold_out") and self.now() - getattr(self, "_gold_out_say", 0) > 120:
@@ -6262,9 +6351,11 @@ class Brain:
                 self.g.train(b, gs.CLUBMAN)
         A = self.tactics
         if A and A.get("want_academy"):
+            done_t = getattr(self, "techs_done", set())
+            hop = gs.CENTURION if 79 in done_t else (gs.PHALANX if 73 in done_t else gs.HOPLITE)
             for b in self.complete(gs.ACADEMY):
                 if not self.r.producing(b) and self.can_afford_unit(food=60, gold=40):
-                    self.g.train(b, gs.HOPLITE)
+                    self.g.train(b, hop)
                     if self.now() - getattr(self, "_acad_say", 0) > 60:
                         self._acad_say = self.now()
                         self.say("academy trains hoplites (%s)" % tactics.civ_name(self.my_civ))
@@ -6284,7 +6375,9 @@ class Brain:
             ranged = A.get("ranged", "bowman")
             utype, cost = {"chariot_archer": (gs.CHARIOT_ARCHER, dict(food=40, wood=70)),
                            "improved_bowman": (gs.IMPROVED_BOWMAN, dict(food=40, gold=20)),
-                           "composite_bowman": (gs.COMPOSITE_BOWMAN, dict(food=40, gold=20))}.get(
+                           "composite_bowman": (gs.COMPOSITE_BOWMAN, dict(food=40, gold=20)),
+                           "horse_archer": (gs.HORSE_ARCHER, dict(food=50, gold=70)),
+                           "heavy_horse_archer": (gs.HEAVY_HORSE_ARCHER, dict(food=50, gold=70))}.get(
                                ranged, (gs.BOWMAN, dict(food=40, wood=20)))
             archers_now = [u for u in mil if tactics.unit_class(u.name) in ("archer", "chariot")]
             ut = self.unit_tech_needed() if self.age >= 3 else None
@@ -6309,13 +6402,18 @@ class Brain:
                     if self.now() - getattr(self, "_rng_say", 0) > 60:
                         self._rng_say = self.now()
                         self.say("archery range trains %s" % ranged)
-        if A and (A.get("want_siege") or A.get("want_iron")):
+        if A and A.get("want_siege"):
             siege = sum(1 for u in mil if tactics.unit_class(u.name) == "siege")
+            done_t = getattr(self, "techs_done", set())
+            cat = gs.HEAVY_CATAPULT if 36 in done_t else (gs.CATAPULT if 54 in done_t else gs.STONE_THROWER)
+            max_siege = 4 if (self.age >= 4 and A.get("iron_plan") == "minoan") else 3
             for b in self.complete(gs.SIEGE_WORKSHOP):
-                if siege < 3 and A.get("want_siege") and not self.r.producing(b) and self.can_afford(wood=180 + 60, gold=80 + 60):
-                    self.g.train(b, gs.STONE_THROWER)
+                if siege < max_siege and not self.r.producing(b) and self.can_afford(wood=180 + 60, gold=80 + 60):
+                    self.g.train(b, cat)
                     siege += 1
-                    self.say("stone thrower ordered (enemy walled in / out-developing us)")
+                    if t - getattr(self, "_siege_say", 0) > 60:
+                        self._siege_say = t
+                        self.say("siege workshop trains %s" % {gs.STONE_THROWER: "stone thrower", gs.CATAPULT: "catapult"}.get(cat, "heavy catapult"))
         if A and A.get("want_temple"):
             priests = sum(1 for u in mil if tactics.unit_class(u.name) == "priest")
             for b in self.complete(gs.TEMPLE):
@@ -6333,6 +6431,10 @@ class Brain:
             more_t = gs.ARCHERY_RANGE                 # (the user: 4-8 ranges, no stable)
             n_mil = len(self.any_of(gs.ARCHERY_RANGE))
             want_st = min(8, max(1, len(self.complete(gs.FARM)) // 2))   # (the user: 4 ranges need >= 8 farms)
+        elif self.age >= 4 and A and A.get("iron_plan") in ("horse_archer", "minoan"):
+            more_t = gs.ARCHERY_RANGE                 # (the Iron army comes from the ranges)
+            n_mil = len(self.any_of(gs.ARCHERY_RANGE))
+            want_st = min(6, max(2, len(self.complete(gs.FARM)) // 7))
         if academy_civ and self.forward_academy():
             return
         first_academy = academy_civ and not self.any_of(gs.ACADEMY)
@@ -6343,6 +6445,10 @@ class Brain:
             if spot:
                 self.start_build(more_t, spot, self.builders_near(2, *spot),
                                  ("(academy) " if more_t == gs.ACADEMY else "(extra stable) ") + why)
+
+    def bronze_buildings(self):
+        """Complete Bronze buildings of different kinds (the Iron Age needs two)."""
+        return sum(1 for bt in (gs.GOVERNMENT_CENTER, gs.TEMPLE, gs.SIEGE_WORKSHOP, gs.ACADEMY) if self.complete(bt))
 
     def second_stone_building(self):
         """The Tool age needs two Stone age buildings of different kinds (two granaries do not count):
@@ -6511,6 +6617,16 @@ class Brain:
         test_writing = str(self.me) in os.environ.get("AOESOLO_TEST_WRITING", "").split(",")
         if test_writing:
             prio = [114] + [x for x in prio if x != 114]       # (tests only: Writing first)
+        iron_plan = (self.tactics or {}).get("iron_plan")
+        if self.age >= 4 and iron_plan:
+            first = {"horse_archer": [38, 44, 49, 34], "scythe_chariot": [126, 34, 45, 50, 51],
+                     "centurion": [73, 79, 43, 48, 51, 52], "minoan": [57, 54, 36, 44, 49]}.get(iron_plan, [])
+            prio = first + [x for x in prio if x not in first]
+            avail = list(set(avail) | ({x for x in first if x in avail}))
+            useless = set()                           # (the plan's own upgrades are never useless)
+        if (self.tactics or {}).get("iron_saving"):
+            # (over 35 farms: food and gold go to the Iron Age - only wood techs meanwhile)
+            avail = [x for x in avail if not K.TECHS[x][3].get("gold") and K.TECHS[x][3].get("food", 0) <= 120]
         order = [tid for tid in prio if tid in avail] + [tid for tid in avail if tid not in prio]
         army_full = len(self.military()) >= 12
         # the first 4 soldiers before any tech, unless the bank has 300 food to spare - except the tech that
@@ -6519,6 +6635,8 @@ class Brain:
             else ({56, 57} if getattr(self, "archer_plan", False) else set())
         if test_writing:
             unit_tech = set(unit_tech) | {114}
+        if self.age >= 4 and iron_plan:
+            unit_tech = set(unit_tech) | {38, 126, 73, 79, 57, 54, 36}
         if len(self.military()) < 4:                      # (also while Bronze researches)
             order = [tid for tid in order if tid in unit_tech or
                      self.can_afford(food=300 + K.TECHS[tid][3].get("food", 0))]

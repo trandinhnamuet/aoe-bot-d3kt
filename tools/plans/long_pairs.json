@@ -1,0 +1,8 @@
+{
+ "games": [
+  {"name": "teamA", "env": {"AOESOLO_SEED": "777"}, "args": ["--players", "4", "--size", "Large", "--teams", "1,1,1,1", "--minutes", "40"]},
+  {"name": "ffaA",  "env": {"AOESOLO_SEED": "777"}, "args": ["--players", "4", "--size", "Large", "--minutes", "40"]},
+  {"name": "teamB", "env": {"AOESOLO_SEED": "888"}, "args": ["--players", "4", "--size", "Large", "--teams", "1,1,1,1", "--minutes", "40"]},
+  {"name": "ffaB",  "env": {"AOESOLO_SEED": "888"}, "args": ["--players", "4", "--size", "Large", "--minutes", "40"]}
+ ]
+}

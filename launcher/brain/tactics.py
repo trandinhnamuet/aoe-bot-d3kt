@@ -38,6 +38,12 @@ COUNTER = {"archer": "cavalry", "chariot": "cavalry", "priest": "cavalry", "sieg
            "camel": "camel", "elephant": "camel", "other": "cavalry"}   # (camels beat cavalry: camels meet camels)
 DEFEND_RADIUS = 22.0     # enemy soldiers this close to our TC are a threat we meet at home
 CAMEL_CIVS = ("Palmyran", "Persian")   # the user: these field camels (their camel advantage)
+# the Iron Age army by civ (the user, 20/10): horse archers, scythe chariots, composite bowmen + catapults, centurions
+IRON_PLAN = {"Choson": "horse_archer", "Carthaginian": "horse_archer", "Yamato": "horse_archer", "Hittite": "horse_archer",
+             "Assyrian": "horse_archer", "Shang": "horse_archer", "Palmyran": "horse_archer",
+             "Roman": "scythe_chariot", "Egyptian": "scythe_chariot",
+             "Minoan": "minoan", "Greek": "centurion", "Macedonian": "centurion"}
+IRON_FARMS = 35                          # the user: over 35 farms -> food + gold are saved for the Iron Age
 GOLD_OUT_AFTER_S = 900.0 # no gold mine known after this long in the game = the map's gold is gone
 ENEMY_MEMORY_S = 120.0   # an enemy soldier seen is counted for this long
 
@@ -143,18 +149,36 @@ def assess(b):
         ranged = "composite_bowman" if 57 in done else ("improved_bowman" if 56 in done else "bowman")
     n_enemy_bld = sum(1 for o in getattr(b.s, "enemy_all", []) if o.kind == 80)
     want_siege = b.age >= 3 and mode == "assault" and enemy_tc is not None and (n_enemy_bld >= 25 or enemy_vils >= 1.3 * len(b.s.villagers))
-    want_iron = b.age >= 3 and t - (b.start_time or 0) > 1200 and enemy_vils > 0 and b.res(0) >= 1000 + 200 and b.res(3) >= 800 + 150
+    farms = len(b.complete(gs.FARM))
+    want_iron = b.age >= 3 and ((farms > IRON_FARMS)                       # (the user, 20/10)
+                                or (t - (b.start_time or 0) > 1200 and enemy_vils > 0 and b.res(0) >= 1000 + 200 and b.res(3) >= 800 + 150))
+    iron_plan = IRON_PLAN.get(our_civ)
+    iron_saving = want_iron and b.age == 3 and not getattr(b, "iron_clicked", False)
+    if b.age >= 4 and iron_plan:
+        # the Iron army of our civ replaces the Bronze doctrine
+        if iron_plan == "horse_archer":
+            want_archery, ranged = True, ("heavy_horse_archer" if 38 in done else "horse_archer")
+        elif iron_plan == "scythe_chariot":
+            pick = "chariot"
+        elif iron_plan == "centurion":
+            want_academy = True
+        elif iron_plan == "minoan":
+            want_archery, ranged = True, ("composite_bowman" if 57 in done else ("improved_bowman" if 56 in done else "bowman"))
+            want_siege = True
     A = dict(mode=mode, pick=pick, our_v=round(our_v, 1), enemy_v=round(enemy_v, 1), threat_v=round(threat_v, 1),
              ours=ours, enemy=enemy, enemy_vils=enemy_vils, enemy_tc=enemy_tc, enemy_civs=civs, want_temple=want_temple,
              want_archery=want_archery, want_siege=want_siege, want_iron=want_iron, ranged=ranged,
-             gold_short=gold_short, want_academy=want_academy, gold_out=gold_out)
+             gold_short=gold_short, want_academy=want_academy, gold_out=gold_out,
+             iron_plan=iron_plan, iron_saving=iron_saving, farms=farms)
     prev = getattr(b, "tactics", None)
     if prev is None or prev["mode"] != mode or prev["pick"] != pick or prev.get("want_temple") != want_temple \
-            or prev.get("want_archery") != want_archery or prev.get("want_siege") != want_siege or prev.get("want_iron") != want_iron:
+            or prev.get("want_archery") != want_archery or prev.get("want_siege") != want_siege or prev.get("want_iron") != want_iron \
+            or prev.get("iron_saving") != iron_saving or prev.get("ranged") != ranged:
         b.say("TACTICS %s: ours %.1f %s vs enemy %.1f %s + %d villagers (threat %.1f), civs %s, enemy TC %s -> train %s%s%s%s%s" % (
             mode, our_v, ours, enemy_v, enemy, enemy_vils, threat_v, civs,
             ("(%.0f,%.0f)" % enemy_tc) if enemy_tc else "unknown", pick, ", temple" if want_temple else "",
             (", archery (%s%s)" % (ranged, ", gold short" if gold_short else "")) if want_archery else "",
-            (", siege" if want_siege else "") + (", academy (hoplites)" if want_academy else ""), ", IRON" if want_iron else ""))
+            (", siege" if want_siege else "") + (", academy (hoplites)" if want_academy else ""),
+            (", IRON (%d farms%s)" % (farms, ", saving" if iron_saving else "")) if want_iron else ""))
     b.tactics = A
     return A

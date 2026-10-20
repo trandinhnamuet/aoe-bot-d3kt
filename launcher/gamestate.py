@@ -48,6 +48,13 @@ HOPLITE = 93             # Soldier-Phal1 (94 Phalanx, 291 Centurion): 60 food 40
 BOWMAN = 4
 IMPROVED_BOWMAN = 5      # "cung A" (needs Improved Bow 56): 40 food 20 gold
 COMPOSITE_BOWMAN = 6     # "cung C" (Iron, Composite Bow 57)
+HORSE_ARCHER = 39        # "horse" = Soldier-Cavalry3_Arch (archery range, Iron): 50 food 70 gold
+HEAVY_HORSE_ARCHER = 281 # "horse thần" = Soldier-Cavalry4 (after Advanced Horse Archer 38)
+SCYTHE_CHARIOT = 339     # "đạp đôi" = Soldier-Hvy_Chariot (the chariot after Heavy Chariots 126)
+PHALANX = 94             # "Y đẹp" (after Phalanx 73)
+CENTURION = 291          # "Y thần" (after Centurion 79)
+CATAPULT = 36            # "K" = Soldier-Catapult2 (after Heavy Catapult 54 - the research that upgrades the stone thrower)
+HEAVY_CATAPULT = 280     # "K thần" = Soldier-Catapult3 (after Massive Catapult 36)
 CHARIOT_ARCHER = 41      # "cung R" = "Soldier-Chariot2", archery range, needs the Wheel (28). (It was 40 - the
                          # stable chariot - so every chariot archer order was refused: recordings 13/10)
 

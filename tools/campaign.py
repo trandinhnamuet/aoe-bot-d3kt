@@ -88,7 +88,8 @@ for g in plan["games"]:
     cmd = [PY, os.path.join(HERE, "arena.py"), "--no-rec", "--tag", "%s_%s" % (tag, g["name"])] + g["args"]
     L("start %s: %s" % (g["name"], " ".join(g["args"])))
     t0 = time.time()
-    rc = subprocess.call(cmd, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    env = dict(os.environ, **{k: str(v) for k, v in (g.get("env") or {}).items()})   # (per game: AOESOLO_SEED...)
+    rc = subprocess.call(cmd, cwd=ROOT, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     L("end %s: exit %d after %.0f s" % (g["name"], rc, time.time() - t0))
     cur["game"] = "-"
     if rc == 3:
