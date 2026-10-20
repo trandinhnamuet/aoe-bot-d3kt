@@ -235,9 +235,8 @@ class Session:
     def _civ(self, c):
         return c if c else lobby.CIV_RANDOM          # "Random" in the lobby: the game rolls the civ itself
 
-    def _name_bot(self, b, i, cfg, used):
-        """Bot i gets its civ (a random one is drawn here) and the name "<Civ> <noun>"; a parked bot with another
-        name re-enters the game list under the new one."""
+    def _plan_name(self, b, i, cfg, used):
+        """Bot i gets its civ (a random one is drawn here) and the name "<Civ> <noun>" (returned, not yet set)."""
         b.bot_index = i
         civs = list(cfg.ai_civs)
         if not civs[i]:
@@ -245,17 +244,26 @@ class Session:
             cfg.ai_civs = civs
         name = botnames.name_for(civs[i], used | set(self.pool.names_in_use))
         used.add(name)
+        return name
+
+    def _rename_bot(self, b, name, cfg):
+        """A parked bot with another name re-enters the game list under the new one (2 s; bots run in parallel)."""
         old = getattr(b, "bot_name", None)
-        if name != old:
-            try:
-                lobby.rename_on_list(b, name, log=self.log)
-                with self.pool.lock:
-                    self.pool.names_in_use.discard(old)
-                    self.pool.names_in_use.add(name)
-                b.bot_name = name
-                self.log("bot %s renamed %s (civ %s)" % (old, name, lobby.CIVS[civs[i] - 1]))
-            except Exception as e:  # noqa: BLE001
-                self.log("rename of %s to %s failed: %r (keeps its name)" % (old, name, e))
+        if name == old:
+            return
+        try:
+            lobby.rename_on_list(b, name, log=self.log)
+            with self.pool.lock:
+                self.pool.names_in_use.discard(old)
+                self.pool.names_in_use.add(name)
+            b.bot_name = name
+            self.log("bot %s renamed %s (civ %s)" % (old, name, lobby.CIVS[cfg.ai_civs[b.bot_index] - 1]))
+        except Exception as e:  # noqa: BLE001
+            self.log("rename of %s to %s failed: %r (keeps its name)" % (old, name, e))
+
+    def _name_bot(self, b, i, cfg, used):
+        """Civ, name and rename of one bot (replacements during the join)."""
+        self._rename_bot(b, self._plan_name(b, i, cfg, used), cfg)
 
     def ensure_bot_exe(self):
         ensure_bot_exe(self.game_dir)
@@ -279,6 +287,19 @@ class Session:
             self.saved_name = cfg.player_name
         self.saved_screen = None
         try:
+            # 0. the bots of this room: civs drawn, names by civ, renamed on the game list all at once and BEFORE
+            # the player's game opens, so they sit enumerating the list when the room appears (1.2.20, the user's
+            # 1v6: six renames one by one took 10 s after the room opened, the last two bots saw no room on their
+            # list yet, were replaced three times and the session gave up after 50 s)
+            self.status("\u0110ang \u0111\u1eb7t t\u00ean c\u00e1c m\u00e1y...")
+            self.bots = self.pool.take(cfg.num_ai)
+            used = set()
+            plan = [(b, self._plan_name(b, i, cfg, used)) for i, b in enumerate(self.bots)]
+            ths = [threading.Thread(target=self._rename_bot, args=(b, nm, cfg), daemon=True) for b, nm in plan]
+            for th in ths:
+                th.start()
+            for th in ths:
+                th.join(12)
             # 1. the player's game opens straight in the hosted room
             self.status("\u0110ang m\u1edf ph\u00f2ng ch\u1edd...")
             with _reg_lock:
@@ -291,11 +312,20 @@ class Session:
             self.player = pl
             # the player's own civ (Random included) the moment the room opens, not after the bots join (the user,
             # 20/10: the room showed another civ first and switched to Random later)
-            try:
-                me_slot = (lobby.my_player_number(pl) or 1) - 1
-                lobby.host_set_civ(pl, me_slot, self._civ(cfg.player_civ), log=self.log)
-            except Exception as e:  # noqa: BLE001
-                self.log("early civ set failed: %r" % (e,))
+            # (the user's 1v6, 1.2.20: written in the same second the room opened, the screen's own init overwrote
+            #  it - "byte 9"; so it is written again until the slot keeps it, 4 s at most)
+            t_civ = time.time()
+            while True:
+                try:
+                    me_slot = (lobby.my_player_number(pl) or 1) - 1
+                    if lobby.host_set_civ(pl, me_slot, self._civ(cfg.player_civ), log=self.log):
+                        break
+                except Exception as e:  # noqa: BLE001
+                    self.log("early civ set failed: %r" % (e,))
+                    break
+                if time.time() - t_civ > 4:
+                    break
+                time.sleep(0.3)
             w, h = RESOLUTIONS.get(cfg.resolution, (1366, 768))
             if not getattr(pl, "menu_fixed", False):
                 procs.set_menu_scale(pl, self.game_dir)
@@ -308,18 +338,14 @@ class Session:
             if not self.test_hidden_player:
                 gw.focus(pl.hwnd)
                 locked = pl.hook.cmd("fglock 1").startswith("ok")
-            self.bots = self.pool.take(cfg.num_ai)
-            # names by civ (the user, 20/10: "Yamato Samurai"): a random civ is drawn here so the name fits it
-            used = set()
-            for i, b in enumerate(self.bots):
-                self._name_bot(b, i, cfg, used)
             # all bots join at once (short EnumSessions timeout): the host takes simultaneous joins in
             # ~2 s, one by one it needs ~2 s each. Any bot the HOST does not list afterwards is retried.
-            ths = [threading.Thread(target=self._try_join, args=(b,), daemon=True) for b in self.bots]
+            # (a bot fresh from a rename may still be enumerating: up to 4 looks at the list, ~3 s each)
+            ths = [threading.Thread(target=self._try_join, args=(b, 4), daemon=True) for b in self.bots]
             for th in ths:
                 th.start()
             for th in ths:
-                th.join(15)
+                th.join(20)
             t1 = time.time()
             while time.time() - t1 < 3 and lobby.present_players(pl) < 1 + sum(
                     lobby.current_screen(b) == "MP Setup Screen" for b in self.bots):
