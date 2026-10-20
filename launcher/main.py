@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox
 import gamedir
 import lobby
 import orchestrator
+import telemetry
 import ui_theme as T
 import updater
 from version import VERSION
@@ -113,6 +114,7 @@ class App:
         self.playing = False
         self.logfile = open(os.path.join(base_dir(), "aoesolo.log"), "a", encoding="utf-8")
         self.saved = self._load_settings()
+        self.telemetry = tk.BooleanVar(value=bool(self.saved.get("telemetry", True)))
 
         self._bg = T.backdrop(W, H)
         self.canvas = tk.Canvas(root, width=W, height=H, highlightthickness=0, bd=0)
@@ -138,6 +140,7 @@ class App:
             self.game_dir_var.set(self.game_dir or "(xem trước)")
             self._apply_status("Sẵn sàng", T.GREEN)
             return
+        telemetry.send("open", self.telemetry.get(), log=self.log, name=self.saved.get("name", ""))
         if self.game_dir:
             root.after(300, lambda: self.use_game_dir(self.game_dir))
         else:
@@ -198,7 +201,7 @@ class App:
     def build_settings(self):
         sv = self.saved
         card = T.Card(self.root, title="Cài đặt trận", pad=12)
-        card.place(x=676, y=108, width=364, height=300)
+        card.place(x=676, y=108, width=364, height=296)
         grid = tk.Frame(card, bg=T.BG2)
         grid.pack(fill="x")
         grid.columnconfigure(1, weight=1)
@@ -219,11 +222,15 @@ class App:
         row(3, "Dân số tối đa", self.pop, [str(p) for p in lobby.POP_LIMITS], "pop")
         row(4, "Điều kiện thắng", self.victory, lobby.VICTORIES, "victory")
         row(5, "Độ phân giải", self.resolution, RESOLUTIONS, "resolution")
+        tk.Checkbutton(grid, text="Gửi thống kê sử dụng (mã máy, phiên bản, số bot mỗi trận)", variable=self.telemetry,
+                       command=self.autosave, bg=T.BG2, fg=T.MUTED, activebackground=T.BG2, activeforeground=T.TEXT,
+                       selectcolor=T.BG, font=T.FONT_S, bd=0, highlightthickness=0, cursor="hand2",
+                       ).grid(row=6, column=0, columnspan=2, sticky="w", pady=(8, 0))
         self._last_n = None
         self.refresh_seats()                              # (the map size for the saved seat count)
 
         game = T.Card(self.root, title="Bản game", pad=12)
-        game.place(x=676, y=420, width=364, height=158)
+        game.place(x=676, y=416, width=364, height=162)
         g = tk.Frame(game, bg=T.BG2)
         g.pack(fill="x")
         g.columnconfigure(1, weight=1)
@@ -357,7 +364,8 @@ class App:
             data = {"name": you.name_var.get().strip()[:24], "civ": you.civ.get(), "team": you.team.get(),
                     "ais": [{"civ": a.civ.get(), "team": a.team.get()} for a in self.active_ai()],
                     "map_type": self.map_type.get(), "map_size": self.map_size.get(), "resources": self.resources.get(),
-                    "pop": self.pop.get(), "victory": self.victory.get(), "resolution": self.resolution.get()}
+                    "pop": self.pop.get(), "victory": self.victory.get(), "resolution": self.resolution.get(),
+                    "telemetry": bool(self.telemetry.get())}
             with open(SETTINGS, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=1)
         except (OSError, AttributeError):
@@ -553,12 +561,16 @@ class App:
         try:
             sess.run()
             self.root.after(0, self.root.iconify)
-            sess.wait_and_play()
+            started = sess.wait_and_play()
         except Exception as e:  # noqa: BLE001
             self.log("setup failed: %r" % (e,))
             self.q.put(("error", "Không tạo được trận: %s" % e))
             self.root.after(0, self.root.deiconify)
             return
+        if started:
+            civ = lobby.CIVS[cfg.player_civ - 1] if 1 <= cfg.player_civ <= len(lobby.CIVS) else "Random"
+            telemetry.send("match", self.telemetry.get(), log=self.log, name=cfg.player_name, bots=cfg.num_ai,
+                           civ=civ, size=cfg.map_size)
         self.set_status("Đang chơi...", T.GREEN)
         while sess.player_alive():
             time.sleep(1.0)

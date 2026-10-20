@@ -1,0 +1,15 @@
+# Cloudflare Worker nhận thống kê sử dụng AoE Bot D3KT (xem src/index.js). TÀI KHOẢN RIÊNG, không chung với AoE-MapCap:
+# đăng nhập wrangler lưu ở C:\Users\Admin\.cf-aoesolo (XDG_CONFIG_HOME) - xem README.md. Triển khai: python deploy.py
+# Mật khẩu trang /stats: python deploy.py secret
+name = "aoesolo-telemetry"
+main = "src/index.js"
+compatibility_date = "2025-06-01"
+workers_dev = true
+
+[observability]
+enabled = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "aoesolo-telemetry"
+database_id = "657ead74-5e56-49be-a532-7c30fb194f7e"
