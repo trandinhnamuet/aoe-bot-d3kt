@@ -157,7 +157,10 @@ def assess(b):
                                 or (t - (b.start_time or 0) > 1200 and enemy_vils > 0 and b.res(0) >= 1000 + 200 and b.res(3) >= 800 + 150)
                                 # the bank already holds the Iron Age with room to spare (iron4 20/10: 8 900 food and
                                 # 2 800 gold banked at minute 50 with 35 farms, never clicked)
-                                or (bronze_for > 360 and farms >= 10 and b.res(0) >= 1500 and b.res(3) >= 1000))
+                                or (bronze_for > 360 and farms >= 10 and b.res(0) >= 1500 and b.res(3) >= 1000)
+                                # food piles up while the army eats every coin of gold (iron70 20/10: 13 000 food,
+                                # 25 gold, 28 farms at minute 68, Iron never clicked): saving starts on the food alone
+                                or (bronze_for > 600 and farms >= 20 and b.res(0) >= 2000))
     iron_plan = IRON_PLAN.get(our_civ)
     iron_saving = want_iron and b.age == 3 and not getattr(b, "iron_clicked", False)
     if b.age >= 4 and iron_plan:

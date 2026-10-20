@@ -2539,6 +2539,8 @@ class Brain:
     def allocate(self, v, counts):
         wood_n = counts.get("wood", 0)
         gold_want = (2 + GOLD_PER_STABLE * max(1, len(self.complete(gs.STABLE)))) if self.age >= 3 else 6
+        if (self.tactics or {}).get("iron_saving") and self.res(gs.GOLD) < 800:
+            gold_want = max(gold_want, 12)       # the 800 gold of the Iron Age come in time (iron70: 7 miners, 25 gold)
         if self.bronze_clicked and counts.get("gold", 0) < gold_want and self.known_gold():
             return "gold"
         leads = sum(1 for (k, x, y, st) in self.sites if st in ("provoke", "run", "push"))
