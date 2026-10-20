@@ -107,12 +107,14 @@ class BotPool:
         self.names_in_use = set()
         self.closed = False
 
-    def _name(self):
-        k = 1
-        while "AI %d" % k in self.names_in_use:
-            k += 1
-        self.names_in_use.add("AI %d" % k)
-        return "AI %d" % k
+    def _identity(self):
+        """A civ drawn now and the name for it ("Yamato Samurai"): the bot parks under its final name, so a
+        Random seat needs no rename when the room opens (names2-4 20/10: six bots re-entering the list at once
+        left one of them blind to the room for 8 s; a bot parked for long always sees it)."""
+        civ = botnames.random_civ()
+        name = botnames.name_for(civ, self.names_in_use)
+        self.names_in_use.add(name)
+        return civ, name
 
     def ensure(self, n):
         with self.lock:
@@ -135,8 +137,8 @@ class BotPool:
                     if saved is not None:
                         lobby.reg_set_dword(lobby.REG_SCREEN, saved)
             with self.lock:
-                name = self._name()
-            gp.bot_name = name
+                civ, name = self._identity()
+            gp.bot_name, gp.bot_civ = name, civ
             lobby.open_connection(gp, name, self.log)        # parked on the game list
             lobby.fast_session_list(gp)
             with self.lock:
@@ -240,23 +242,28 @@ class Session:
         b.bot_index = i
         civs = list(cfg.ai_civs)
         if not civs[i]:
-            civs[i] = botnames.random_civ()
+            civs[i] = getattr(b, "bot_civ", 0) or botnames.random_civ()   # Random: the civ the bot parked with
             cfg.ai_civs = civs
+        if civs[i] == getattr(b, "bot_civ", None) and getattr(b, "bot_name", None):
+            used.add(b.bot_name)
+            return b.bot_name                     # parked under this name already: nothing to rename
         name = botnames.name_for(civs[i], used | set(self.pool.names_in_use))
         used.add(name)
         return name
 
-    def _rename_bot(self, b, name, cfg):
+    def _rename_bot(self, b, name, cfg, delay=0.0):
         """A parked bot with another name re-enters the game list under the new one (2 s; bots run in parallel)."""
         old = getattr(b, "bot_name", None)
         if name == old:
             return
+        if delay:
+            time.sleep(delay)
         try:
             lobby.rename_on_list(b, name, log=self.log)
             with self.pool.lock:
                 self.pool.names_in_use.discard(old)
                 self.pool.names_in_use.add(name)
-            b.bot_name = name
+            b.bot_name, b.bot_civ = name, cfg.ai_civs[b.bot_index]
             self.log("bot %s renamed %s (civ %s)" % (old, name, lobby.CIVS[cfg.ai_civs[b.bot_index] - 1]))
         except Exception as e:  # noqa: BLE001
             self.log("rename of %s to %s failed: %r (keeps its name)" % (old, name, e))
@@ -295,7 +302,10 @@ class Session:
             self.bots = self.pool.take(cfg.num_ai)
             used = set()
             plan = [(b, self._plan_name(b, i, cfg, used)) for i, b in enumerate(self.bots)]
-            ths = [threading.Thread(target=self._rename_bot, args=(b, nm, cfg), daemon=True) for b, nm in plan]
+            # (staggered by 0.5 s: six bots re-entering the TCP/IP list in the same instant left one of them
+            #  blind to the room - names2 / names3 20/10)
+            ths = [threading.Thread(target=self._rename_bot, args=(b, nm, cfg, 0.5 * k), daemon=True)
+                   for k, (b, nm) in enumerate(plan)]
             for th in ths:
                 th.start()
             for th in ths:
@@ -369,18 +379,20 @@ class Session:
                                 lobby.current_screen(b), lobby.open_popups(b)))
                     except Exception as e:
                         self.log("  diag: %r" % (e,))
-                    if attempt in (1, 3):
+                    if attempt == 1:
+                        try:
+                            lobby.reopen_list(b, log=self.log)     # fresh DirectPlay session, then join again
+                        except Exception as e:
+                            self.log("%s reopen: %r" % (getattr(b, "bot_name", "bot"), e))
+                    elif attempt in (2, 3):
                         # a bot that ignores the game list (seen rarely, even Cancel does nothing): swap it
+                        # (names2 20/10: one renamed bot in six saw no room after 4 looks; a fresh session is
+                        #  cheaper than a new bot process + rename, so it goes first)
                         self.log("replacing %s" % getattr(b, "bot_name", "bot"))
                         b.kill()
                         self.pool.release_names([b])
                         b = self.bots[i] = self.pool.take(1)[0]
                         self._name_bot(b, i, cfg, {getattr(x, "bot_name", "") for x in self.bots if x is not b})
-                    elif attempt == 2:
-                        try:
-                            lobby.reopen_list(b, log=self.log)     # fresh DirectPlay session, then join again
-                        except Exception as e:
-                            self.log("%s reopen: %r" % (getattr(b, "bot_name", "bot"), e))
                     self._try_join(b, retries=1 if attempt == 0 else 2)
                     t1 = time.time()
                     while (not self._host_sees(pl, b) and time.time() - t1 < 3
