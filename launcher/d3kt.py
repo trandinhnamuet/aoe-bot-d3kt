@@ -1110,7 +1110,8 @@ class Brain:
                 self.enemy_army_seen[e.id] = (e.name, e.x, e.y, t)
         for eid in [k for k, v in self.enemy_army_seen.items() if t - v[3] > 240]:
             del self.enemy_army_seen[eid]
-        if not self.enemy_civs:
+        if not self.enemy_civs and not getattr(self, "_civs_done", False):
+            self._civs_done = True                   # (allied test games have no enemies: once, not every tick)
             try:
                 self.my_civ = self.g.civ(self.me)
                 self.vil_cost = 75 if tactics.civ_name(self.my_civ) == "Palmyran" else 50
@@ -2561,10 +2562,12 @@ class Brain:
             return "berry"
         if self.age >= 2 and self.complete(gs.MARKET):
             return "farm"
+        frontier_dry = self.now() - getattr(self, "_frontier_dry", -999) < 60
         if (self.age == 1 and not self.tool_clicked and self.woodline_placed and self.res(gs.WOOD) > 250
-                and counts.get("scout", 0) < 4 and (self.food_items() < FOOD_ITEMS_WANTED or self.food_emergency)):
+                and counts.get("scout", 0) < 4 and (self.food_items() < FOOD_ITEMS_WANTED or self.food_emergency)
+                and not frontier_dry):
             return "scout"                          # no food to send them to: look for more
-        if self.woodline_placed and wood_n >= WOOD_HARD_CAP and counts.get("scout", 0) < 6 and self.age <= 2:
+        if self.woodline_placed and wood_n >= WOOD_HARD_CAP and counts.get("scout", 0) < 6 and self.age <= 2                 and not frontier_dry:
             return "scout"                          # players never put more than ~7 on wood: find food instead
         if wood_rich and counts.get("hunt", 0) < max(self.hunt_capacity, 1):
             return "hunt"                           # (food at any range rather than a 13th chopper - skill ffa4 P2)
@@ -3435,7 +3438,8 @@ class Brain:
         wt = 7 if not self.tool_clicked else min(self.wood_target(), WOOD_HARD_CAP)
         if self.wood_rich_food_poor():
             wt = 3                                   # (wood banked, food short: the choppers look for food)
-            if not self.food_desperate and len(self.s.villagers) >= 12:
+            if len(self.s.villagers) >= 12 and self.now() - getattr(self, "_woodrich_say", -999) > 60:
+                self._woodrich_say = self.now()
                 self.say("WATCHDOG %d wood banked, %d food: food at any range, 3 on wood" % (self.res(gs.WOOD), self.res(gs.FOOD)))
             self.food_desperate = True
         need = len(self.s.villagers) - wt - 2
@@ -5568,13 +5572,15 @@ class Brain:
                 cands.append((score, x, y))
         cands.sort()
         check_lions = bool(self.lions) and v.cls == gs.CLS_VILLAGER
-        for score, x, y in cands[:300]:
+        for score, x, y in cands[:40]:                     # (300 candidates x lion paths = 4 s ticks, team4b 20/10)
             if check_lions and (self.lion_near(x, y, LION_SAFE + 1) or self.path_meets_lion(v.x, v.y, x, y)):
                 continue
             if gaz and (any(math.hypot(x - gx, y - gy) < GAZELLE_SAFE + 1 for gx, gy in gaz)
                         or self.path_meets(v.x, v.y, x, y, gaz, GAZELLE_SAFE)):
                 continue
             return (x + 0.5, y + 0.5)
+        if not cands:
+            self._frontier_dry = self.now()               # (nothing left to explore: no scouts for a minute)
         return None
 
     # ================================================================ resource buildings
