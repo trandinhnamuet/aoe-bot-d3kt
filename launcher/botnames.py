@@ -94,7 +94,11 @@ def name_for(civ, used):
         return sig
     shared = ANIMALS + TITLES
     random.shuffle(shared)
-    for noun in NOUNS.get(cname, []) + shared:
+    own = list(NOUNS.get(cname, []))
+    # the civ's own flavour ("Yamato Samurai") 4 times in 10, otherwise a shared title / animal, English after the
+    # civ name or Vietnamese before it ("Te Tuong Yamato"); everything else is the fallback
+    order = own + shared if random.random() < 0.4 else shared + own
+    for noun in order:
         n = _civ_name(cname, noun)
         if _fits(n, used):
             return n

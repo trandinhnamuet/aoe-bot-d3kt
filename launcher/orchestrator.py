@@ -349,7 +349,7 @@ class Session:
             # all bots join at once (short EnumSessions timeout): the host takes simultaneous joins in
             # ~2 s, one by one it needs ~2 s each. Any bot the HOST does not list afterwards is retried.
             # (a bot fresh from a rename may still be enumerating: up to 4 looks at the list, ~3 s each)
-            ths = [threading.Thread(target=self._try_join, args=(b, 6), daemon=True) for b in self.bots]
+            ths = [threading.Thread(target=self._try_join, args=(b, 2), daemon=True) for b in self.bots]
             for th in ths:
                 th.start()
             for th in ths:
@@ -377,12 +377,14 @@ class Session:
                                 lobby.current_screen(b), lobby.open_popups(b)))
                     except Exception as e:
                         self.log("  diag: %r" % (e,))
-                    if attempt == 1:
+                    if attempt in (0, 1):
+                        # a bot that sees no room after two looks stays blind for 10+ s (names6/7 21/10: one bot of
+                        # five, 17 s) but a fresh DirectPlay session sees it at once: reopen first, replace later
                         try:
                             lobby.reopen_list(b, log=self.log)     # fresh DirectPlay session, then join again
                         except Exception as e:
                             self.log("%s reopen: %r" % (getattr(b, "bot_name", "bot"), e))
-                    elif attempt in (2, 3):
+                    elif attempt == 3:
                         # a bot that ignores the game list (seen rarely, even Cancel does nothing): swap it
                         # (names2 20/10: one renamed bot in six saw no room after 4 looks; a fresh session is
                         #  cheaper than a new bot process + rename, so it goes first)

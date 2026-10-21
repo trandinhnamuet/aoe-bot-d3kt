@@ -44,7 +44,20 @@ def _child(pid, me, enemies, logq, stop_ev, period, pop_limit, limit_s, tag, par
                 except Exception:  # noqa: BLE001
                     return False
             return False
-        d3kt.run(g, me, enemies, log=log, stop=stop, period=period, pop_limit=pop_limit)
+        import traceback
+        t_start = time.time()
+        for attempt in range(4):
+            try:
+                d3kt.run(g, me, enemies, log=log, stop=stop, period=period, pop_limit=pop_limit)
+                break
+            except Exception as e:  # noqa: BLE001
+                log("bot %d stopped: %r | %s" % (me, e, " / ".join(traceback.format_exc().strip().splitlines()[-6:])))
+                # a brain that fails in its first seconds read memory the game had not filled yet (names6 21/10: a
+                # TypeError at 0 s stopped one of six brains and the match never started its clock): start it again
+                if time.time() - t_start > 20 or stop():
+                    break
+                time.sleep(1.0)
+                log("bot %d restarted (attempt %d)" % (me, attempt + 2))
     except Exception as e:  # noqa: BLE001
         log("bot %d stopped: %r" % (me, e))
     finally:
