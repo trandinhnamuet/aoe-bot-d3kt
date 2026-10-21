@@ -1,7 +1,8 @@
 """Bot names (the user, 20/10). A bot whose seat is Random parks under a generic name - a title and an animal,
 English or Vietnamese (ASCII, the game's name field has no accents): "Duke Falcon", "Te Tuong Ho",
-"Hoang De Su Tu". A seat with a chosen civ gets "<Civ> <noun>" - "Yamato Samurai", "Roman Caesar" - from the
-civ's own nouns first, then the shared titles and animals. Names stay within NAME_MAX characters (the game's
+"Hoang De Su Tu". A seat with a chosen civ gets the civ name and a noun - "Yamato Samurai", "Roman Caesar"; a
+Vietnamese noun goes in front of the civ name ("Te Tuong Yamato", the user, 21/10); the first Roman is always
+"Hoang Tu Roman". The civ's own nouns come first, then the shared titles and animals. Names stay within NAME_MAX characters (the game's
 name field) and never repeat among the bots of one launcher."""
 import random
 
@@ -71,14 +72,30 @@ def generic_name(used):
         k += 1
 
 
+# a civ's signature name, tried first: the first Roman bot is always "Hoang Tu Roman" (the user, 21/10); the second
+# Roman and the rest are named like any other civ
+SIGNATURE = {"Roman": "Hoang Tu Roman"}
+VN_WORDS = frozenset(TITLES_VN + ANIMALS_VN)
+
+
+def _civ_name(cname, noun):
+    """English noun after the civ ("Roman Legion"); a Vietnamese noun before it ("Su Tu Roman", "Hoang Tu Roman")."""
+    return "%s %s" % (noun, cname) if noun in VN_WORDS else "%s %s" % (cname, noun)
+
+
 def name_for(civ, used):
-    """"<Civ> <noun>" for a chosen civ: the civ's own nouns first, then the shared animals and titles (shuffled),
-    the first one not in `used` that fits NAME_MAX; numbered when every noun is taken."""
+    """The name of a bot with a chosen civ: the civ's signature name if it is free, then the civ's own nouns, then
+    the shared animals and titles (shuffled) - the first one not in `used` that fits NAME_MAX. An English noun
+    follows the civ name ("Yamato Samurai"), a Vietnamese one comes first ("Te Tuong Yamato"); numbered when
+    every noun is taken."""
     cname = lobby.CIVS[civ - 1] if 1 <= civ <= len(lobby.CIVS) else "AI"
+    sig = SIGNATURE.get(cname)
+    if sig and _fits(sig, used):
+        return sig
     shared = ANIMALS + TITLES
     random.shuffle(shared)
     for noun in NOUNS.get(cname, []) + shared:
-        n = "%s %s" % (cname, noun)
+        n = _civ_name(cname, noun)
         if _fits(n, used):
             return n
     k = 2
