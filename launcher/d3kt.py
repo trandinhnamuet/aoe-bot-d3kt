@@ -6863,10 +6863,24 @@ class Brain:
                 self.say("research %d at the market" % tech)
             return
 
+    def refresh_tactics(self):
+        """The assessment (b.tactics) is refreshed here when army() has no soldiers to command. It used to be
+        refreshed only with soldiers alive: a bot with none kept the snapshot of its last soldier - the user's
+        Yamato of 22/10 reached the Iron Age at 33:18 with 0 soldiers, kept "iron_saving: no new soldiers" for
+        26 minutes and banked 19 000 food and 5 000 wood without training anything."""
+        if self.age >= 3 and (self.bronze_clicked or self.rules_broken):
+            try:
+                tactics.assess(self)
+            except Exception as e:  # noqa: BLE001
+                if self.now() - getattr(self, "_rt_err_t", -99) > 60:
+                    self._rt_err_t = self.now()
+                    self.say("tactics refresh failed: %r" % (e,))
+
     def army(self):
         s = self.s
         mil = self.military()
         if not mil:
+            self.refresh_tactics()
             return
         tc = self.tc()
         t = self.now()
@@ -6942,6 +6956,7 @@ class Brain:
                     self.hp_prev[u.id] = u.hp
             mil = [u for u in mil if u.id not in lone]
             if not mil:
+                self.refresh_tactics()
                 return
         A = tactics.assess(self)
         if demo_dump.enabled() and self.age >= 3 and A["mode"] in ("raid", "assault") and len(self.military()) >= 3:
