@@ -263,14 +263,19 @@ def rename_on_list(gp, name, log=print):
     raise RuntimeError("game list screen not reached (screen=%s)" % current_screen(gp))
 
 
-def reopen_list(gp, log=print):
-    """Back from the game list to the connection screen and in again (fresh DirectPlay session)."""
+def reopen_list(gp, log=print, name=None):
+    """Back from the game list to the connection screen and in again (fresh DirectPlay session). The name box on
+    that screen is filled from the registry - the PLAYER's name - so a bot passes its own name again (the user's
+    1v7 of 22/10: the bots that reopened the list sat in the room under "TranKhoaCu")."""
     if current_screen(gp) == "MP Setup Screen":
         _click(gp, LIST_CANCEL, 0.2)
         wait_screen(gp, "Join Screen", 5, poll=0.05)
     _click(gp, LIST_CANCEL, 0.2)
     if not wait_screen(gp, "MP Startup Screen", 5, poll=0.05):
         raise RuntimeError("connection screen not reached (screen=%s)" % current_screen(gp))
+    if name:
+        set_name_field(gp, name)
+        time.sleep(0.2)
     _click(gp, CONN_TCPIP, 0.2)
     for _ in range(3):
         _click(gp, CONN_OK, 0.2)
@@ -307,7 +312,7 @@ def client_join(gp, log=print, retries=6, name=None):
             attempt + 1, current_screen(gp), listed_sessions(gp)))
         if attempt % 2 == 1:
             try:
-                reopen_list(gp, log)
+                reopen_list(gp, log, name)
             except Exception as e:
                 log("reopen: %r" % (e,))
     raise RuntimeError("could not join the lobby")

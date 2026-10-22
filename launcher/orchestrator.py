@@ -220,11 +220,20 @@ class Session:
         self.test_hidden_player = False   # testing only: run the "player" as another hidden instance
 
     # ------------------------------------------------------------------
-    def _try_join(self, b, retries=1):
+    def _try_join(self, b, retries=1, recover=False):
         try:
             lobby.join_from_list(b, log=self.log, retries=retries)
         except Exception as e:
             self.log("%s join: %r" % (getattr(b, "bot_name", "bot"), e))
+            if recover and "could not join" in str(e):
+                # a bot that sees no room after two looks stays blind: it reopens its own game list at once, in
+                # its own thread (the user's 1v7 of 22/10: three blind bots were handled one after another,
+                # 8 s each, the room was ready after 36 s)
+                try:
+                    lobby.reopen_list(b, log=self.log, name=getattr(b, "bot_name", None))
+                    lobby.join_from_list(b, log=self.log, retries=3)
+                except Exception as e2:
+                    self.log("%s join after reopen: %r" % (getattr(b, "bot_name", "bot"), e2))
 
     @staticmethod
     def _host_sees(pl, b):
@@ -349,11 +358,11 @@ class Session:
             # all bots join at once (short EnumSessions timeout): the host takes simultaneous joins in
             # ~2 s, one by one it needs ~2 s each. Any bot the HOST does not list afterwards is retried.
             # (a bot fresh from a rename may still be enumerating: up to 4 looks at the list, ~3 s each)
-            ths = [threading.Thread(target=self._try_join, args=(b, 2), daemon=True) for b in self.bots]
+            ths = [threading.Thread(target=self._try_join, args=(b, 2, True), daemon=True) for b in self.bots]
             for th in ths:
                 th.start()
             for th in ths:
-                th.join(20)
+                th.join(30)
             t1 = time.time()
             while time.time() - t1 < 3 and lobby.present_players(pl) < 1 + sum(
                     lobby.current_screen(b) == "MP Setup Screen" for b in self.bots):
@@ -381,7 +390,7 @@ class Session:
                         # a bot that sees no room after two looks stays blind for 10+ s (names6/7 21/10: one bot of
                         # five, 17 s) but a fresh DirectPlay session sees it at once: reopen first, replace later
                         try:
-                            lobby.reopen_list(b, log=self.log)     # fresh DirectPlay session, then join again
+                            lobby.reopen_list(b, log=self.log, name=getattr(b, "bot_name", None))   # fresh session, own name
                         except Exception as e:
                             self.log("%s reopen: %r" % (getattr(b, "bot_name", "bot"), e))
                     elif attempt == 3:

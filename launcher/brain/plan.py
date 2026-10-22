@@ -67,6 +67,10 @@ def demands(b):
     #     granary yet and under 120 wood -> two chop until it is paid
     if b.berry_clusters() and not b.any_of(gs.GRANARY) and b.res(gs.WOOD) < 120 and n >= 3:
         out.append(Demand("wood", 2, 2, 0.9))
+    # 0d. pop-capped in the Stone age with no wood for the next house (iron35 21/10: Greek and Yamato, 10 villagers,
+    #     20 wood for nine minutes, 1 300 food banked, every new villager on elephants): two chop at once
+    if stage == 1 and n >= 8 and b.res(gs.HEADROOM) < 2 and b.res(gs.WOOD) < 30:
+        out.append(Demand("wood", 2, 2, 0.95, ok=lambda i, v: i >= 6))
     # 1. the first six: berries, or the search for the first bush
     if berries:
         out.append(Demand("berry", min(6, n), 6, 1, indices=BERRY_SIX))   # (the first patch: no 70-food rule)
@@ -218,6 +222,13 @@ def demands(b):
             wood_want = max(4, int(round(gatherers * 2 / 3.0)))
             if b.res(gs.WOOD) > 800 and b.res(gs.FOOD) < 300:
                 wood_want = max(4, int(round(gatherers / 2.0)))   # (wood piling up: back towards 1 : 1)
+        if b.growing():
+            # the town still grows and no enemy soldier is in sight (the user, 21/10: the Iron Age before minute
+            # 32): 3 miners until it is grown (iron60 / iron35: 7 miners, 945 gold banked, food at 11-60 and
+            # the TC without a villager for ten minutes)
+            gold_want = min(gold_want, 3)
+        if (b.tactics or {}).get("iron_saving") and b.res(gs.GOLD) < 800:
+            gold_want = max(gold_want, 10)              # the 800 gold of the Iron Age in time (iron70: 7 miners, 25 gold)
         if str(b.me) in os.environ.get("AOESOLO_TEST_WRITING", "").split(","):
             gold_want = max(gold_want, 3)               # (tests only: the gold for Writing)
         if b.known_gold() and gold_want > 0:

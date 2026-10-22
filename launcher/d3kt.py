@@ -180,6 +180,12 @@ SIZES = {gs.HOUSE: 2, gs.FARM: 3, gs.GRANARY: 3, gs.STORAGE_PIT: 3, gs.MARKET: 3
 PREREQ = {gs.STABLE: (gs.BARRACKS,), gs.ARCHERY_RANGE: (gs.BARRACKS,), gs.ACADEMY: (gs.STABLE,),
           gs.SIEGE_WORKSHOP: (gs.ARCHERY_RANGE,), gs.TOWN_CENTER: (gs.GOVERNMENT_CENTER,), gs.MARKET: (gs.GRANARY,)}
 MILITARY_BUILDINGS = (gs.STABLE, gs.ACADEMY, gs.ARCHERY_RANGE, gs.SIEGE_WORKSHOP, gs.BARRACKS)
+# the buildings the Iron army comes from, built BEFORE the Iron Age is in so that it is produced the moment it is
+# (the user, 22/10: "BA 4-7 before Iron is done" - the horse archer civs fought with cavalry in Bronze and had one
+# archery range built after Iron; the first horse archer came 4-7 minutes after the click)
+IRON_PREBUILD = {"horse_archer": ((gs.ARCHERY_RANGE, 5),), "elephants": ((gs.ARCHERY_RANGE, 3), (gs.STABLE, 3)),
+                 "minoan": ((gs.ARCHERY_RANGE, 4), (gs.SIEGE_WORKSHOP, 2)), "scythe_chariot": ((gs.STABLE, 5),),
+                 "centurion": ((gs.ACADEMY, 5),)}
 
 
 def game_s(snap):
@@ -2840,12 +2846,14 @@ class Brain:
             reach = [(i % W, i // W) for i, d in enumerate(dist) if d >= 0]
             if len(reach) >= 150:
                 continue                                 # free to walk: idle for another reason
-            houses = [h for h in self.s.mine if h.type == gs.HOUSE and h.hp > 0]
+            # a house or a FARM next to the pocket (the user, 22/10: farms ringed the town centre and every new
+            # villager was shut in; a farm is 75 wood, the farmers come back to it later)
+            houses = [h for h in self.s.mine if h.type in (gs.HOUSE, gs.FARM) and h.hp > 0]
             if not houses:
                 continue
 
             def gap(h):
-                return min(abs(h.x - rx) + abs(h.y - ry) for rx, ry in reach)
+                return min(abs(h.x - rx) + abs(h.y - ry) for rx, ry in reach) - (1.5 if h.type == gs.FARM else 0)
             h = min(houses, key=gap)
             if gap(h) > 3.5:
                 continue
@@ -2855,8 +2863,9 @@ class Brain:
                 self.say("trapped: delete failed: %r" % (e,))
                 return
             isince.pop(v.id, None)
-            self.say("TRAPPED villager #%d (%s) at (%.0f,%.0f) idle %.0f s in a %d-tile pocket: house #%d at (%.0f,%.0f) deleted"
-                     % (v.id, self.role_name(v.id), v.x, v.y, t - rec[0], len(reach), h.id, h.x, h.y))
+            self.say("TRAPPED villager #%d (%s) at (%.0f,%.0f) idle %.0f s in a %d-tile pocket: %s #%d at (%.0f,%.0f) deleted"
+                     % (v.id, self.role_name(v.id), v.x, v.y, t - rec[0], len(reach),
+                        "farm" if h.type == gs.FARM else "house", h.id, h.x, h.y))
             return                                       # one at a time
 
     def bad_target(self, o):
@@ -3218,6 +3227,10 @@ class Brain:
     def farm_paths_ok(self, x0, y0, drop):
         pm = self.pm.copy()
         pm.block_rect(x0, y0, x0 + 3, y0 + 3)
+        for p in self.pending_of(gs.FARM):
+            # farms ordered a moment ago are not on the map yet: each one passed its own check, together they
+            # shut the town centre in (the user's 1v7 of 22/10: a whole batch of new villagers stood at the TC)
+            pm.block_rect(int(p.x - 1.5), int(p.y - 1.5), int(p.x - 1.5) + 3, int(p.y - 1.5) + 3)
         dr = pathing.rect_of(drop.x, drop.y, 3)
         start = pm.ring_tiles(*dr)
         if not start:
@@ -6350,6 +6363,22 @@ class Brain:
                 spot, why = self.building_spot(btype)
                 if spot:
                     self.start_build(btype, spot, self.builders_near(2, *spot), why0 + why)
+                    return
+        plan = (A or {}).get("iron_plan")
+        if (plan and self.age >= 3 and ((A or {}).get("want_iron") or self.age >= 4)
+                and (self.bronze_buildings() >= 2 or getattr(self, "iron_clicked", False))):
+            for bt, n0 in IRON_PREBUILD.get(plan, ()):
+                n_t = n0 + (2 if self.age >= 4 and bt != gs.SIEGE_WORKSHOP and self.res(gs.WOOD) >= 600 else 0)
+                have = len(self.any_of(bt)) + len(self.pending_of(bt))
+                if have >= n_t or len(self.pending_of(bt)) >= 2:
+                    continue
+                if not all(self.complete(pq) for pq in PREREQ.get(bt, ())):
+                    continue
+                if not self.can_afford(wood=BUILD_COST.get(bt, 150) + 75):
+                    continue
+                spot, why = self.building_spot(bt)
+                if spot:
+                    self.start_build(bt, spot, self.builders_near(2, *spot), "(Iron army %d/%d) " % (have + 1, n_t) + why)
                     return
         if False and self.rules_broken and not self.any_of(gs.BARRACKS) and not self.pending_of(gs.BARRACKS) \
                 and self.can_afford(wood=125):
