@@ -658,7 +658,7 @@ class App:
 
 
 def selftest():
-    """AoESolo.exe --selftest: set up a 1-AI room, press Start in the player's game, play 30 s, close."""
+    """AoESolo.exe --selftest: set up a 1-AI room with a HIDDEN host game (--visible: the player's own window), press Start, play 30 s, close."""
     log = open(os.path.join(base_dir(), "selftest.log"), "w", encoding="utf-8")
 
     def L(m):
@@ -670,14 +670,19 @@ def selftest():
                                 dll=resource_path(os.path.join("bin", "aoehook.dll")),
                                 dplaunch=resource_path(os.path.join("bin", "dplaunch.exe")))
     ok = False
+    visible = "--visible" in sys.argv
+    sess.test_hidden_player = not visible        # (the user, 23/10: a test must not open a game window on his screen)
     try:
         sess.run()
         t = threading.Thread(target=sess.wait_and_play, daemon=True)
         t.start()
         time.sleep(2)
-        sess.player.hook.cmd("vin 1")
-        sess.player.hook.click(628, 728)
-        sess.player.hook.cmd("vin 0")
+        if visible:
+            sess.player.hook.cmd("vin 1")
+            sess.player.hook.click(628, 728)
+            sess.player.hook.cmd("vin 0")
+        else:
+            lobby.start_match(sess.player, 2, log=L)        # (hidden host: the same Start click the arena uses)
         t.join(90)
         time.sleep(30)
         ok = bool(sess.threads) and all(th.is_alive() for th in sess.threads)
