@@ -40,7 +40,7 @@ and this project lets him play against bots that follow his own rules ("luật D
 1. Bump `launcher/version.py` (VERSION); `python -m py_compile` the changed files first.
 2. `.venv\Scripts\python build.py --no-dll --no-game` -> `dist\AoESolo\AoESolo.exe`; run `--selftest`.
 3. Zip = `AoESolo.exe` + `HUONG_DAN.txt` (repo root: user guide, ASCII Vietnamese) as `AoESolo.zip`.
-4. Commit, `git push`, then `python tools/release.py vX.Y.Z "AoE Bot D3KT vX.Y.Z" notes.txt AoESolo.zip`
+4. Commit, `git push`, then (system Python - the .venv one fails the GitHub certificate) `python tools/release.py vX.Y.Z "AoE Bot D3KT vX.Y.Z" notes.txt AoESolo.zip`
    (token from `git credential fill`, never printed). Release name exactly "AoE Bot D3KT vX.Y.Z", tag vX.Y.Z.
    Notes in Vietnamese: "Mới trong bản này" + the content of the two previous patches ("Có từ 1.2.x").
    The launcher's updater offers the latest release to every user (one click).
