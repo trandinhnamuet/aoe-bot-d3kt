@@ -119,3 +119,79 @@ def send(ev="open", cfg_enabled=True, log=None, wait=False, name="", bots=None, 
     if wait:
         t.join(TIMEOUT + 2)
     return t
+
+
+# ---------------------------------------------------------------- logs for remote debugging (02/11/2026)
+LOG_ENDPOINT = "https://aoesolo-telemetry.aoebotd3kt.workers.dev/v1/log"
+LOG_TAIL = 8 * 1024 * 1024          # at most the last 8 MB of the session (gzip ~ 1 MB)
+
+
+def system_info():
+    """CPU, RAM and Windows of this machine (a slow internet-café PC is the usual suspect)."""
+    import platform
+    info = {"cores": os.cpu_count()}
+    try:
+        import psutil
+        info["phys"] = psutil.cpu_count(logical=False)
+        info["ram_gb"] = round(psutil.virtual_memory().total / 2 ** 30, 1)
+        f = psutil.cpu_freq()
+        if f:
+            info["mhz"] = int(f.max or f.current or 0)
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import winreg
+        k = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+        info["cpu"] = winreg.QueryValueEx(k, "ProcessorNameString")[0].strip()[:60]
+    except Exception:  # noqa: BLE001
+        info["cpu"] = platform.processor()[:60]
+    info["win"] = platform.platform()[:40]
+    return info
+
+
+def send_log(path, start=0, kind="manual", name="", note="", cfg_enabled=True, log=None, wait=False, done=None):
+    """aoesolo.log from byte `start` (this session) gzip-ed to the receiver, in the background. Sent whenever the
+    statistics box is on - also from source when AOESOLO_TELEMETRY=1. done(ok, msg) is called when finished."""
+    env = os.environ.get("AOESOLO_TELEMETRY")
+    if env is not None and env.strip() in ("0", "false", "no", ""):
+        return None
+    if not cfg_enabled and kind != "manual":
+        return None                              # (the button always sends: the player asked for it)
+
+    def job():
+        ok, msg = False, ""
+        try:
+            import gzip
+            size = os.path.getsize(path)
+            begin = max(start, size - LOG_TAIL)
+            with open(path, "rb") as f:
+                f.seek(begin)
+                raw = f.read()
+            data = gzip.compress(raw, 6)
+            q = urllib.parse.urlencode({"id": install_id(), "v": VERSION, "kind": kind, "name": (name or "")[:40],
+                                        "sys": json.dumps(system_info(), ensure_ascii=True), "note": (note or "")[:500],
+                                        "raw": len(raw)})
+            url = (os.environ.get("AOESOLO_LOG_URL") or LOG_ENDPOINT) + "?" + q
+            u = urllib.parse.urlsplit(url)
+            conn = _IPv4HTTPSConnection(u.hostname, u.port or 443, timeout=60, context=ssl.create_default_context()) \
+                if u.scheme == "https" else http.client.HTTPConnection(u.hostname, u.port or 80, timeout=60)
+            try:
+                conn.request("POST", u.path + "?" + u.query, body=data,
+                             headers={"content-type": "application/gzip", "user-agent": "AoESolo/" + VERSION})
+                r = conn.getresponse()
+                body = r.read(2048).decode("utf-8", "replace")
+                ok = r.status == 200
+                msg = "%d KB sent" % (len(data) // 1024) if ok else "server %s %s" % (r.status, body[:80])
+            finally:
+                conn.close()
+        except Exception as e:  # noqa: BLE001
+            msg = "%s: %s" % (e.__class__.__name__, e)
+        if log:
+            log("log upload (%s): %s" % (kind, msg))
+        if done:
+            done(ok, msg)
+    t = threading.Thread(target=job, name="logupload", daemon=True)
+    t.start()
+    if wait:
+        t.join(70)
+    return t

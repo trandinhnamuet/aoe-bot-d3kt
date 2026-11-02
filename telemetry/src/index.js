@@ -36,6 +36,9 @@ export default {
         });
       }
       if (url.pathname === "/api/stats") return await stats(request, env, url);
+      if (url.pathname === "/v1/log" && request.method === "POST") return await ingestLog(request, env, url);
+      if (url.pathname === "/api/logs") return await listLogs(request, env);
+      if (url.pathname.startsWith("/api/logs/")) return await getLog(request, env, url);
       if (url.pathname === "/") return new Response("AoE Bot D3KT telemetry\n", { headers: { "content-type": "text/plain" } });
       return new Response("not found\n", { status: 404 });
     } catch (e) {
@@ -170,4 +173,49 @@ async function stats(request, env, url) {
     pageSize: PAGE,
     updatedAt: Date.now(),
   });
+}
+
+
+// ---- logs (02/11/2026): the launcher's aoesolo.log of one session, gzip, for remote debugging
+//   POST /v1/log?id=<uuid>&v=<ver>&kind=<k>&name=<n>&sys=<json>&note=<text>&raw=<bytes>   body = gzip bytes
+//   GET  /api/logs            list (Bearer)        GET /api/logs/<n>   the gzip bytes (Bearer)
+const LOG_MAX = 1900 * 1024;               // D1 keeps a value up to 2 MB
+const LOG_KEEP = 300;                      // the newest 300 logs are kept
+const clean = (v, n) => String(v || "").replace(/[ -]/g, " ").trim().slice(0, n);
+
+async function ingestLog(request, env, url) {
+  const q = url.searchParams;
+  const id = q.get("id") || "";
+  if (!UUID.test(id)) return json({ ok: false, error: "bad id" }, 400);
+  const buf = await request.arrayBuffer();
+  if (!buf.byteLength || buf.byteLength > LOG_MAX) return json({ ok: false, error: "size" }, 413);
+  const db = env.DB;
+  const now = Date.now();
+  // one machine: 40 logs an hour at most
+  const n = await db.prepare("SELECT COUNT(*) AS n FROM logs WHERE install = ? AND ts > ?").bind(id, now - 3600000).first();
+  if (n && n.n >= 40) return json({ ok: false, error: "rate" }, 429);
+  const r = await db.prepare(
+    "INSERT INTO logs (ts, install, version, kind, name, ip, sys, note, raw_size, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+    .bind(now, id, clean(q.get("v"), 16), clean(q.get("kind"), 24) || "manual", clean(q.get("name"), 40) || null,
+          request.headers.get("cf-connecting-ip") || "", clean(q.get("sys"), 600) || null, clean(q.get("note"), 500) || null,
+          parseInt(q.get("raw") || "0", 10) || 0, buf).run();
+  await db.prepare("DELETE FROM logs WHERE id <= (SELECT id FROM logs ORDER BY id DESC LIMIT 1 OFFSET ?)").bind(LOG_KEEP).run();
+  return json({ ok: true, log: r.meta && r.meta.last_row_id });
+}
+
+async function listLogs(request, env) {
+  if (!authorized(request, env)) return json({ error: "unauthorized" }, 401);
+  const r = await env.DB.prepare(
+    "SELECT id, ts, install, version, kind, name, ip, sys, note, raw_size, length(data) AS size FROM logs ORDER BY id DESC LIMIT 100").all();
+  return json({ logs: r.results });
+}
+
+async function getLog(request, env, url) {
+  if (!authorized(request, env)) return json({ error: "unauthorized" }, 401);
+  const n = parseInt(url.pathname.split("/").pop(), 10);
+  const row = await env.DB.prepare("SELECT data FROM logs WHERE id = ?").bind(n).first();
+  if (!row) return json({ error: "not found" }, 404);
+  // (D1 hands a BLOB back as an array of numbers)
+  const bytes = row.data instanceof ArrayBuffer ? row.data : new Uint8Array(row.data);
+  return new Response(bytes, { headers: { "content-type": "application/gzip", "cache-control": "no-store" } });
 }

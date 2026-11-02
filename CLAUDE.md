@@ -13,6 +13,9 @@ and this project lets him play against bots that follow his own rules ("luật D
   allocation table actually used by NewBrain — `d3kt.allocate` is the OLD allocator, mostly unused),
   `brain/tactics.py` (army assessment, Iron-age plans per civ), `botnames.py`, `updater.py`, `telemetry.py`.
 - `KIEN_TRUC_AI.md` = brain architecture; `LUAT_D3KT.md` = the owner's rules + every test result (section 3.9b).
+- Remote logs: launchers on other machines upload their session log (button "Gửi log cho dev", and by itself
+  after every match / failed room). `python tools/fetch_logs.py` lists them, `... <n>` / `... new` downloads to
+  `tools/remote_logs/` (each starts with an `AoESolo <ver> | system {...}` line: cores, RAM, CPU; `SYS cpu=..` every 30 s).
 - Logs: the launcher writes `aoesolo.log` next to `AoESolo.exe` (the whole session: room setup and every bot's
   lines `[P<n> <game s>s] ...`, `STAT` every ~10 s). Start every investigation there.
 
@@ -36,7 +39,7 @@ and this project lets him play against bots that follow his own rules ("luật D
 ## Build and release
 1. Bump `launcher/version.py` (VERSION); `python -m py_compile` the changed files first.
 2. `.venv\Scripts\python build.py --no-dll --no-game` -> `dist\AoESolo\AoESolo.exe`; run `--selftest`.
-3. Zip = `AoESolo.exe` + `HUONG_DAN.txt` (user guide, ASCII Vietnamese) as `AoESolo.zip`.
+3. Zip = `AoESolo.exe` + `HUONG_DAN.txt` (repo root: user guide, ASCII Vietnamese) as `AoESolo.zip`.
 4. Commit, `git push`, then `python tools/release.py vX.Y.Z "AoE Bot D3KT vX.Y.Z" notes.txt AoESolo.zip`
    (token from `git credential fill`, never printed). Release name exactly "AoE Bot D3KT vX.Y.Z", tag vX.Y.Z.
    Notes in Vietnamese: "Mới trong bản này" + the content of the two previous patches ("Có từ 1.2.x").

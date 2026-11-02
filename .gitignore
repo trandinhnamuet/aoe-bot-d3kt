@@ -29,3 +29,4 @@ AoE-HD/
 
 # data learned from recordings of online games: holds other players' nicknames - kept local
 tools/learned/
+tools/remote_logs/

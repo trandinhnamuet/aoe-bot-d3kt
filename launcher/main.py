@@ -112,7 +112,9 @@ class App:
         self.session = None
         self.pool = None
         self.playing = False
-        self.logfile = open(os.path.join(base_dir(), "aoesolo.log"), "a", encoding="utf-8")
+        self.logpath = os.path.join(base_dir(), "aoesolo.log")
+        self.logfile = open(self.logpath, "a", encoding="utf-8")
+        self.log_start = self.logfile.tell()          # this session's part of aoesolo.log (sent with "Gửi log")
         self.saved = self._load_settings()
         self.telemetry = tk.BooleanVar(value=bool(self.saved.get("telemetry", True)))
 
@@ -141,6 +143,10 @@ class App:
             self._apply_status("Sẵn sàng", T.GREEN)
             return
         telemetry.send("open", self.telemetry.get(), log=self.log, name=self.saved.get("name", ""))
+        try:
+            self.log("AoESolo %s | system %s" % (VERSION, json.dumps(telemetry.system_info(), ensure_ascii=False)))
+        except Exception:  # noqa: BLE001
+            pass
         if self.game_dir:
             root.after(300, lambda: self.use_game_dir(self.game_dir))
         else:
@@ -260,6 +266,8 @@ class App:
         self.sub_lbl.place(x=36, y=34, width=600)
         self.log_btn = T.Button(bar, "Nhật ký ▸", kind="tiny", command=self.toggle_log)
         self.log_btn.place(x=36, y=58)
+        self.send_log_btn = T.Button(bar, "Gửi log cho dev", kind="tiny", command=self.send_log)
+        self.send_log_btn.place(x=130, y=58)
         self.ready_btn = T.Button(bar, "Bot sẵn sàng lại", kind="ghost", command=self.reready)
         self.ready_btn.place(x=668, y=24)
         self.update_btn = T.Button(bar, "", kind="gold", command=self.do_update)   # shown when a newer release exists
@@ -568,18 +576,56 @@ class App:
             self.log("setup failed: %r" % (e,))
             self.q.put(("error", "Không tạo được trận: %s" % e))
             self.root.after(0, self.root.deiconify)
+            self.auto_log("setup_failed")
             return
         if started:
             civ = lobby.CIVS[cfg.player_civ - 1] if 1 <= cfg.player_civ <= len(lobby.CIVS) else "Random"
             telemetry.send("match", self.telemetry.get(), log=self.log, name=cfg.player_name, bots=cfg.num_ai,
                            civ=civ, size=cfg.map_size)
         self.set_status("Đang chơi...", T.GREEN)
+        t_sys = 0
         while sess.player_alive():
             time.sleep(1.0)
+            if time.time() - t_sys >= 30:
+                t_sys = time.time()
+                self.log_sys()                        # (a slow machine shows here: CPU, RAM, game processes)
         sess.shutdown()
         self.root.after(0, self.root.deiconify)
         self.q.put(("done", "Trận đã kết thúc"))
+        self.auto_log("match_end" if started else "no_match")
         self.root.after(1000, self.warm_bots)
+
+    # ---------------------------------------------------------------- logs for the developer (02/11/2026)
+    def log_sys(self):
+        try:
+            import psutil
+            n = sum(1 for p in psutil.process_iter(["name"]) if (p.info["name"] or "").upper() in ("AOEBOT.EXE", "EMPIRESX.EXE"))
+            self.log("SYS cpu=%.0f%% ram=%.0f%% game_procs=%d" % (psutil.cpu_percent(None), psutil.virtual_memory().percent, n))
+        except Exception:  # noqa: BLE001
+            pass
+
+    def auto_log(self, kind):
+        """Sent by itself after a match / a failed room (the owner tests on other machines, 02/11)."""
+        try:
+            self.logfile.flush()
+        except OSError:
+            pass
+        telemetry.send_log(self.logpath, self.log_start, kind=kind, name=self.saved.get("name", ""),
+                           cfg_enabled=self.telemetry.get(), log=self.log)
+
+    def send_log(self):
+        try:
+            self.logfile.flush()
+        except OSError:
+            pass
+        self.send_log_btn.set_enabled(False)
+        self.sub.set("Đang gửi log...")
+
+        def done(ok, msg):
+            self.q.put(("status", ("Đã gửi log cho dev" if ok else "Gửi log lỗi: %s" % msg[:60], T.GREEN if ok else T.RED)))
+            self.root.after(0, lambda: self.send_log_btn.set_enabled(True))
+        telemetry.send_log(self.logpath, self.log_start, kind="manual", name=self.saved.get("name", ""),
+                           log=self.log, done=done)
 
     # ---------------------------------------------------------------- updates
     def _check_update(self):

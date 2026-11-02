@@ -1,0 +1,17 @@
+AoESolo - AI danh AoE 1 theo luat D3KT
+
+1. Can co san game AoE 1 Rise of Rome ban AoE-HD tren may (vi du ban cai qua XArena). Goi nay KHONG kem game.
+2. Giai nen o dau cung duoc, chay AoESolo.exe.
+3. Launcher tu tim thu muc game (registry cua bo cai, C:\Program Files\XArena\Game\AoE-HD, cac o dia...).
+   Khong thay thi bam "Chon..." va tro toi thu muc co EMPIRESX.EXE.
+4. Neu thu muc game nam trong Program Files, launcher hoi de chep ban game tren may sang
+   %LOCALAPPDATA%\AoESolo\AoE-HD va dung ban chep do.
+5. Nhap ten, chon so may va phe, bam "Choi". Nen choi toc do x2; may yeu nen de 1-4 bot.
+
+Ma nguon va mo ta: https://github.com/trandinhnamuet/aoe-bot-d3kt
+
+6. Launcher tu kiem tra ban moi khi mo; co ban moi thi bam nut "Cap nhat" o thanh duoi, no tu tai, thay file va mo lai.
+7. Launcher gui thong ke su dung an danh (ma may ngau nhien, phien ban, so bot moi tran) de biet co bao nhieu nguoi dung.
+   Khong gui noi dung tran hay file nao. Tat bang o "Gui thong ke su dung" trong Cai dat tran.
+8. Gap loi: bam "Gui log cho dev" o thanh duoi de gui nhat ky phien choi cho nguoi phat trien (kem thong tin CPU/RAM
+   cua may). Sau moi tran launcher cung tu gui (tat bang o "Gui thong ke su dung").

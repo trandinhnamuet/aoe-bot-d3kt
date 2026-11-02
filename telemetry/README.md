@@ -38,3 +38,11 @@ Gmail minhtuan90959095@gmail.com.
 Launcher: gửi `open` khi mở AoESolo.exe, `match` khi bấm Start trong phòng (trận vs bot bắt đầu). Tắt bằng ô "Gửi thống kê
 sử dụng" trong Cài đặt trận hoặc `AOESOLO_TELEMETRY=0`. Chạy từ mã nguồn không gửi trừ khi `AOESOLO_TELEMETRY=1`;
 `AOESOLO_TELEMETRY_URL` đổi địa chỉ nhận để kiểm thử.
+
+## Log từ xa (02/11/2026)
+
+- `POST /v1/log?id=&v=&kind=&name=&sys=&note=&raw=` body = aoesolo.log của phiên (gzip, tối đa 1,9 MB). Launcher gửi khi
+  bấm "Gửi log cho dev", và tự gửi sau mỗi trận (`match_end`, `no_match`) hoặc khi vào phòng lỗi (`setup_failed`), nếu ô
+  "Gửi thống kê sử dụng" bật. Giữ 300 log mới nhất; một máy tối đa 40 log mỗi giờ.
+- `GET /api/logs` (Bearer) danh sách, `GET /api/logs/<n>` file gzip. Ở máy dev: `python tools/fetch_logs.py` (danh sách),
+  `python tools/fetch_logs.py <n>` hoặc `new` (tải về `tools/remote_logs/`).
