@@ -570,6 +570,8 @@ class App:
         self.session = sess
         try:
             sess.run()
+            if getattr(sess, "room_problem", False):
+                self.auto_log("room_problem")          # (sent now: a frozen room never reaches "no_match")
             self.root.after(0, self.root.iconify)
             started = sess.wait_and_play()
         except Exception as e:  # noqa: BLE001

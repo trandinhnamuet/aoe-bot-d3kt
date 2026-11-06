@@ -418,19 +418,34 @@ class Session:
             lobby.host_set_team(pl, self.slots[pl.pid], teams[0] if teams else (1 if together else 0), log=self.log)
 
             def civ_team(b, civ, team):
-                if not lobby.client_set_civ_team(b, self.slots[b.pid], civ, team, host=pl, log=self.log):
-                    lobby.ready(b, False)                                          # un-ready, then the UI way
-                    lobby.choose_civ(b, self.slots[b.pid], civ, log=self.log)
-                    lobby.set_team(b, self.slots[b.pid], team, log=self.log)
-                    lobby.ready(b, False)
+                slot = self.slots[b.pid]
+                try:
+                    # sent with Ready, checked on the host (ready + civ + team); a miss is un-readied only if ready and
+                    # sent again with a longer wait (3, 6, 9, 12 s). The old fallback clicked the civ list and the
+                    # 'I'm Ready' toggle blind: on a slow machine it left every bot not ready on a concrete civ (net
+                    # cafe 1v7 in one team, 06/11), and the civ list never reaches Random on a hidden bot (test 06/11)
+                    if not lobby.client_set_civ_team(b, slot, civ, team, host=pl, log=self.log, attempts=4):
+                        self.log("slot %d: civ/team/ready not confirmed after 4 tries" % slot)
+                except Exception as e:  # noqa: BLE001
+                    self.log("slot %d civ/team: %r" % (slot, e))
             ths = [threading.Thread(target=civ_team, daemon=True,
                                     args=(b, self._civ(cfg.ai_civs[i]),
                                           teams[i + 1] if len(teams) > i + 1 else (2 if together else 0)))
                    for i, b in enumerate(self.bots)]
             for th in ths:
                 th.start()
+            t_ct = time.time()                 # one deadline for all (was 30 s per thread: up to 3.5 min locked)
             for th in ths:
-                th.join(30)
+                th.join(max(0.1, 45 - (time.time() - t_ct)))
+            # what the room shows now (the net cafe logs could not tell a bot's ready mark); a wrong room sends the
+            # log to the developer at once (main.py), even if the player then kills the frozen game
+            self.room_problem = not all(
+                lobby.is_ready(pl, self.slots[b.pid]) and lobby.slot_civ(pl, self.slots[b.pid]) == self._civ(cfg.ai_civs[i])
+                and lobby.slot_team(pl, self.slots[b.pid]) == 1 + (teams[i + 1] if len(teams) > i + 1 else (2 if together else 0))
+                for i, b in enumerate(self.bots))
+            self.log("room: " + ", ".join("slot %d %s civ %s team %s" % (
+                self.slots[b.pid], "ready" if lobby.is_ready(pl, self.slots[b.pid]) else "NOT ready",
+                lobby.slot_civ(pl, self.slots[b.pid]), lobby.slot_team(pl, self.slots[b.pid])) for b in self.bots))
             if locked:
                 pl.hook.cmd("fglock 2")
             lobby._click(pl, lobby.LOBBY_READY_HOST, 0.2)     # the click returns once the game handled it
@@ -487,9 +502,12 @@ class Session:
         for b in self.bots:
             if lobby.current_screen(b) != "MP Setup Screen":
                 continue
-            comm = b.mem.u32(lobby.ADDR_COMM)
-            if comm and not b.mem.u32(comm + 0x84):
-                lobby.ready(b, False)
+            slot = self.slots.get(b.pid) if getattr(self, "slots", None) else None
+            if slot is None:
+                slot = (lobby.my_player_number(b) or 1) - 1
+            # (comm+0x84 was read for every bot before: that is slot 1's mark, right only for player 2)
+            if not lobby.is_ready(b, slot):
+                lobby.set_ready(b, slot, True, host=self.player)
                 n += 1
         self.log("re-ready: %d bot(s) clicked ready" % n)
         return n

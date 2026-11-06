@@ -318,11 +318,13 @@ def client_join(gp, log=print, retries=6, name=None):
     raise RuntimeError("could not join the lobby")
 
 
-def choose_civ(gp, slot, civ, log=print):
-    """civ: 1..16 (index into CIVS + 1). Verified via memory; tries list-below then list-above."""
+def choose_civ(gp, slot, civ, log=print, host=None):
+    """civ: 1..16 (index into CIVS + 1). Verified via memory (on `host` when given: the bot's own copy may already
+    hold the value written straight into it); tries list-below then list-above."""
     row_y = LOBBY_ROW_Y[slot]
     n_items = len(CIVS) + 1
-    before = slot_civ(gp, slot)
+    side = host or gp
+    before = slot_civ(side, slot)
     if civ == CIV_RANDOM and before == CIV_RANDOM:
         return True
     for direction in ("below", "above"):
@@ -334,13 +336,18 @@ def choose_civ(gp, slot, civ, log=print):
             y = row_y - 12 - (n_items - (civ - 1)) * DROPDOWN_ITEM_H
         gp.hook.click(*_xy(gp, LOBBY_CIV_ITEM_X, y))
         time.sleep(0.8)
-        got = slot_civ(gp, slot)
-        if got == civ or (civ == CIV_RANDOM and got is not None and got != before):
+        got = slot_civ(side, slot)
+        t0 = time.time()
+        while host is not None and got != civ and time.time() - t0 < 2:     # (the host hears it a moment later)
+            time.sleep(0.1)
+            got = slot_civ(side, slot)
+        # (Random is byte CIV_RANDOM on the host; "changed" counted as Random before and left a concrete civ - 06/11)
+        if got == civ or (host is None and civ == CIV_RANDOM and got is not None and got != before):
             log("slot %d civ=%s (byte %s)" % (slot, CIVS[civ - 1] if civ <= len(CIVS) else "Random", got))
             return True
         gp.hook.tap(0x1B)
         time.sleep(0.4)
-    log("WARNING: could not set civ for slot %d (have %s)" % (slot, slot_civ(gp, slot)))
+    log("WARNING: could not set civ for slot %d (have %s)" % (slot, slot_civ(side, slot)))
     return False
 
 
@@ -390,29 +397,65 @@ SCR_MY_CIV_PENDING = 0x72C
 SCR_MY_TEAM_PENDING = 0x738
 
 
-def client_set_civ_team(gp, slot, civ, team, host=None, log=print, timeout=2.0):
-    """Client: set civ + team in the screen's controls and send them with Ready (no dropdown opens).
-    Confirmed on the host's side when `host` is given. The bot is left READY on success."""
-    scr = gp.mem.u32(ADDR_SCREEN)
-    if not scr or current_screen(gp) != "MP Setup Screen":
-        return False
-    quiet = lambda m: None
-    host_set_civ(gp, slot, civ, log=quiet)
-    host_set_team(gp, slot, team, log=quiet)
-    gp.mem.write(scr + SCR_MY_CIV_PENDING, int(civ).to_bytes(4, "little"))
-    gp.mem.write(scr + SCR_MY_TEAM_PENDING, int(team + 1).to_bytes(4, "little"))
-    _click(gp, LOBBY_READY_CLIENT, 0.1)
-    if host is None:
+COMM_READY = 0x80           # dword per slot (0-based, host = slot 0): 1 = "I'm Ready", the same on the host and on
+                            # every client (found 06/11 by two clients readying in turn; +0x198 only marks a change)
+
+
+def is_ready(gp, slot):
+    comm = gp.mem.u32(ADDR_COMM)
+    return bool(comm) and gp.mem.u32(comm + COMM_READY + 4 * slot) == 1
+
+
+def set_ready(gp, slot, want, host=None, timeout=4.0):
+    """Client: ready / not ready, clicking only when the state is not already the wanted one ('I'm Ready' is a
+    toggle: a blind click un-readies a bot that was ready - the user's 1v7 at the net cafe, 06/11: after a slow
+    confirm the old fallback left every bot not ready and on its old civ). Checked on `host` when given."""
+    side = host or gp
+    if is_ready(side, slot) == want:
         return True
+    _click(gp, LOBBY_READY_CLIENT, 0.1)
     t0 = time.time()
     while time.time() - t0 < timeout:
-        if slot_civ(host, slot) == civ and slot_team(host, slot) == team + 1:
-            log("slot %d civ=%s team=%s (sent with Ready, %.1f s)" % (
-                slot, CIVS[civ - 1] if civ <= len(CIVS) else "Random", team or "-", time.time() - t0))
+        if is_ready(side, slot) == want:
             return True
         time.sleep(0.1)
-    log("slot %d civ/team not confirmed (host sees civ %s team %s)" % (
-        slot, slot_civ(host, slot), slot_team(host, slot)))
+    return is_ready(side, slot) == want
+
+
+def client_set_civ_team(gp, slot, civ, team, host=None, log=print, timeout=3.0, attempts=3):
+    """Client: set civ + team in the screen's controls and send them with Ready (no dropdown opens).
+    Confirmed on the host's side when `host` is given: ready AND the right civ / team there; otherwise the bot is
+    made not ready (only if it is ready) and it goes again, with a longer wait each time (a slow machine with 8
+    games: the host saw the bot's values 5-10 s late). The bot is left READY on success."""
+    quiet = lambda m: None
+    t_all = time.time()
+    if host is not None and is_ready(host, slot) and slot_civ(host, slot) == civ and slot_team(host, slot) == team + 1:
+        return True                                   # already right: nothing to click
+    for attempt in range(attempts if host is not None else 1):
+        scr = gp.mem.u32(ADDR_SCREEN)
+        if not scr or current_screen(gp) != "MP Setup Screen":
+            return False
+        if host is not None and is_ready(host, slot) and not set_ready(gp, slot, False, host=host):
+            log("slot %d: could not un-ready (attempt %d)" % (slot, attempt + 1))
+            continue
+        host_set_civ(gp, slot, civ, log=quiet)
+        host_set_team(gp, slot, team, log=quiet)
+        gp.mem.write(scr + SCR_MY_CIV_PENDING, int(civ).to_bytes(4, "little"))
+        gp.mem.write(scr + SCR_MY_TEAM_PENDING, int(team + 1).to_bytes(4, "little"))
+        _click(gp, LOBBY_READY_CLIENT, 0.1)
+        if host is None:
+            return True
+        t0 = time.time()
+        wait = timeout * (attempt + 1)
+        while time.time() - t0 < wait:
+            if is_ready(host, slot) and slot_civ(host, slot) == civ and slot_team(host, slot) == team + 1:
+                log("slot %d civ=%s team=%s (sent with Ready, %.1f s%s)" % (
+                    slot, CIVS[civ - 1] if civ <= len(CIVS) else "Random", team or "-", time.time() - t_all,
+                    ", attempt %d" % (attempt + 1) if attempt else ""))
+                return True
+            time.sleep(0.1)
+        log("slot %d civ/team not confirmed (host sees civ %s team %s ready %s, attempt %d)" % (
+            slot, slot_civ(host, slot), slot_team(host, slot), is_ready(host, slot), attempt + 1))
     return False
 
 
@@ -464,16 +507,20 @@ def join_from_list(gp, log=print, retries=8):
     raise RuntimeError("could not join the lobby")
 
 
-def set_team(gp, slot, team, log=print):
-    """team: 0 = no team, 1..4. Team button cycles; verified via memory."""
+def set_team(gp, slot, team, log=print, host=None):
+    """team: 0 = no team, 1..4. Team button cycles; verified via memory (on `host` when given)."""
     want = team + 1
+    side = host or gp
     for _ in range(6):
-        if slot_team(gp, slot) == want:
+        t0 = time.time()
+        while host is not None and slot_team(side, slot) != want and time.time() - t0 < 1.0:
+            time.sleep(0.1)
+        if slot_team(side, slot) == want:
             log("slot %d team=%s" % (slot, team or "-"))
             return True
         gp.hook.click(*_xy(gp, LOBBY_TEAM_X, LOBBY_ROW_Y[slot]))
         time.sleep(0.7)
-    return slot_team(gp, slot) == want
+    return slot_team(side, slot) == want
 
 
 def ready(gp, host):
