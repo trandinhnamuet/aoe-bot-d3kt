@@ -3,3 +3,4 @@ pillow>=10
 numpy>=1.24
 pyinstaller>=6.0
 capstone>=5.0
+certifi

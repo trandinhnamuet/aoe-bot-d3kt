@@ -31,7 +31,7 @@ def build_exe():
     run([PY, "-m", "PyInstaller", "--noconfirm", "--clean", "--onefile", "--windowed", "--name", "AoESolo",
          "--icon", os.path.join(ROOT, "launcher", "aoesolo.ico"),
          "--paths", os.path.join(ROOT, "launcher"),
-         "--hidden-import", "psutil", *data,
+         "--hidden-import", "psutil", "--hidden-import", "certifi", *data,
          "--add-binary", os.path.join(ROOT, "hook", "aoehook.dll") + os.pathsep + "bin",
          "--add-binary", os.path.join(ROOT, "hook", "dplaunch.exe") + os.pathsep + "bin",
          "--distpath", DIST, "--workpath", os.path.join(ROOT, "build"), "--specpath", os.path.join(ROOT, "build"),

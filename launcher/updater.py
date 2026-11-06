@@ -9,6 +9,7 @@ import tempfile
 import urllib.request
 import zipfile
 
+import netssl
 from version import REPO, VERSION
 
 API = "https://api.github.com/repos/%s/releases/latest" % REPO
@@ -28,7 +29,7 @@ def parse(v):
 def check(timeout=8):
     """The latest release when it is newer than this build: {"version", "url", "notes", "page"}; else None."""
     req = urllib.request.Request(API, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=netssl.context()) as r:
         rel = json.loads(r.read().decode("utf-8"))
     tag = rel.get("tag_name") or ""
     if parse(tag) <= parse(VERSION):
@@ -42,7 +43,7 @@ def check(timeout=8):
 
 def download(url, dest, progress=None, timeout=30):
     req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=timeout) as r, open(dest, "wb") as f:
+    with urllib.request.urlopen(req, timeout=timeout, context=netssl.context()) as r, open(dest, "wb") as f:
         total = int(r.headers.get("Content-Length") or 0)
         done = 0
         while True:

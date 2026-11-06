@@ -12,7 +12,9 @@ import http.client
 import json
 import os
 import socket
-import ssl
+import ssl  # noqa: F401
+
+import netssl
 import sys
 import threading
 import urllib.parse
@@ -85,7 +87,7 @@ def _post(url, payload, timeout=TIMEOUT):
     data = json.dumps(payload).encode("utf-8")
     headers = {"content-type": "application/json", "user-agent": "AoESolo/" + VERSION}
     if u.scheme == "https":
-        conn = _IPv4HTTPSConnection(u.hostname, u.port or 443, timeout=timeout, context=ssl.create_default_context())
+        conn = _IPv4HTTPSConnection(u.hostname, u.port or 443, timeout=timeout, context=netssl.context())
     else:
         conn = http.client.HTTPConnection(u.hostname, u.port or 80, timeout=timeout)
     try:
@@ -173,7 +175,7 @@ def send_log(path, start=0, kind="manual", name="", note="", cfg_enabled=True, l
                                         "raw": len(raw)})
             url = (os.environ.get("AOESOLO_LOG_URL") or LOG_ENDPOINT) + "?" + q
             u = urllib.parse.urlsplit(url)
-            conn = _IPv4HTTPSConnection(u.hostname, u.port or 443, timeout=60, context=ssl.create_default_context()) \
+            conn = _IPv4HTTPSConnection(u.hostname, u.port or 443, timeout=60, context=netssl.context()) \
                 if u.scheme == "https" else http.client.HTTPConnection(u.hostname, u.port or 80, timeout=60)
             try:
                 conn.request("POST", u.path + "?" + u.query, body=data,

@@ -749,12 +749,19 @@ def check():
     out = []
     for name in ("psutil", "winreg", "PIL", "PIL.ImageTk", "dplobby", "orchestrator", "lobby", "procs", "inject", "aoemem",
                  "gamedir", "gamestate", "d3kt", "pathing", "walling", "placement", "gamewin", "brainproc", "ui_theme", "updater", "version",
-                 "brain.brain", "brain.plan", "brain.jobs", "brain.adapter", "brain.tasks.lure", "brain.tasks.herd"):
+                 "brain.brain", "brain.plan", "brain.jobs", "brain.adapter", "brain.tasks.lure", "brain.tasks.herd",
+                 "certifi", "netssl"):
         try:
             __import__(name)
             out.append("ok   " + name)
         except Exception as e:  # noqa: BLE001
             out.append("FAIL %s: %r" % (name, e))
+    try:                                     # the update check over TLS with the bundled roots (06/11: cafe failed)
+        import updater
+        updater.check()
+        out.append("ok   update check")
+    except Exception as e:  # noqa: BLE001
+        out.append("FAIL update check: %r" % (e,))
     for rel in (os.path.join("bin", "aoehook.dll"), os.path.join("bin", "dplaunch.exe")):
         out.append(("ok   " if os.path.exists(resource_path(rel)) else "FAIL missing ") + rel)
     with open(os.path.join(base_dir(), "check.log"), "w", encoding="utf-8") as f:
