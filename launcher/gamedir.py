@@ -26,7 +26,9 @@ HD, NORMAL = "AoE HD", "AoE thường (AOE1R)"
 EDITIONS = [HD, NORMAL]
 EDITION_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47": HD, "7bb06b0cd465b2639cc90a10f12533ee002e3a0c": HD, "0a9c9bf528da8fd678abc5db0391436809a977d9": NORMAL}
 EDITION_KEY = {HD: "GameDirHD", NORMAL: "GameDirNormal"}
-COMMON = [r"Program Files\XArena\Game\AoE-HD", r"Program Files (x86)\XArena\Game\AoE-HD",
+COMMON = [r"Game Online\XArena\Game\AoE-HD", r"XArena\Game\AoE-HD", r"Game Online\XArena\Game\AOE1R",
+          r"XArena\Game\AOE1R",                      # (the cafe's XArena, 07/11: H:\Game Online\XArena\Game\AoE-HD)
+          r"Program Files\XArena\Game\AoE-HD", r"Program Files (x86)\XArena\Game\AoE-HD",
           r"Program Files\XArena\Game\AOE1R", r"Program Files (x86)\XArena\Game\AOE1R",
           r"AOE1R", r"Game\AOE1R", r"Games\AOE1R",
           r"Program Files (x86)\Microsoft Games\Age of Empires", r"Program Files\Microsoft Games\Age of Empires",
@@ -114,10 +116,50 @@ def _shallow(drive, depth=2):
     return None
 
 
-def find(base_dir, deep=True):
-    for p in candidates(base_dir):
-        if has_game(p):
+def quality(p):
+    """2 for the bots' known build + 1 for cnc-ddraw: the same game on native DirectDraw ran ~10x slower in an
+    8-player match (the cafe's G: "Games Off" copy, 07/11: 48 game seconds in 8 minutes, bots dropped)."""
+    try:
+        import botdir
+        dd = botdir.ddraw_kind(p) == "cnc-ddraw"
+    except Exception:  # noqa: BLE001
+        dd = False
+    return 2 * known_build(p) + dd
+
+
+def manual_choice():
+    return _reg(winreg.HKEY_CURRENT_USER, APP_KEY, "GameDirManual") if winreg else None
+
+
+def remember_manual(path):
+    """A folder the player picked himself is kept even when a better one is found."""
+    if winreg is None:
+        return
+    try:
+        with winreg.CreateKey(winreg.HKEY_CURRENT_USER, APP_KEY) as k:
+            winreg.SetValueEx(k, "GameDirManual", 0, winreg.REG_SZ, path or "")
+    except OSError:
+        pass
+
+
+def _is_manual(p):
+    m = manual_choice()
+    return bool(m) and os.path.normcase(os.path.normpath(m)) == os.path.normcase(os.path.normpath(p))
+
+
+def best(paths):
+    """The player's own pick if among them, else the best quality (ties: the first)."""
+    paths = [p for p in paths if has_game(p)]
+    for p in paths:
+        if _is_manual(p):
             return p
+    return max(paths, key=lambda p: (quality(p), -paths.index(p))) if paths else None
+
+
+def find(base_dir, deep=True):
+    p = best(candidates(base_dir))
+    if p:
+        return p
     if deep:
         for drive in _drives():
             p = _shallow(drive)
@@ -245,8 +287,13 @@ def find_editions(base_dir, deep=False):
             p = _shallow(drive)
             if p:
                 paths.append(p)
+    by_ed = {}
     for p in paths:
         e = edition_of(p)
-        if e and e not in out:
-            out[e] = p
+        if e:
+            by_ed.setdefault(e, []).append(p)
+    for e, ps in by_ed.items():
+        if e in out and (_is_manual(out[e]) or quality(out[e]) >= max(quality(p) for p in ps)):
+            continue
+        out[e] = best(([out[e]] if e in out else []) + ps)
     return out

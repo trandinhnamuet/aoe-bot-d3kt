@@ -415,6 +415,7 @@ class App:
         if not gamedir.has_game(p):
             messagebox.showerror(APP_TITLE, "Thư mục này không có EMPIRESX.EXE.")
             return
+        gamedir.remember_manual(p)
         self.use_game_dir(p)
 
     def use_game_dir(self, p):
@@ -448,9 +449,23 @@ class App:
         self.log("game folder: %s (%s)" % (p, self.edition.get()))
         try:
             import botdir
+            dd = botdir.ddraw_kind(p)
             self.log("game exe: %s, ddraw: %s, bots run from %s" % (
                 "known build" if gamedir.known_build(p) else "UNKNOWN build sha1 %s" % (gamedir._sha1(p) or "?")[:12],
-                botdir.ddraw_kind(p), botdir.bot_dir(p)))
+                dd, botdir.bot_dir(p)))
+            if dd != "cnc-ddraw":
+                # (the cafe's G:\Games Off\Aoe-HD, 07/11: the player's game on native DirectDraw held the whole
+                #  8-player match to ~1/10 speed and bots dropped; the cafe's XArena copy has cnc-ddraw)
+                others = [q for q in gamedir.find_editions(base_dir(), deep=False).values()
+                          if os.path.normcase(q) != os.path.normcase(p) and botdir.ddraw_kind(q) == "cnc-ddraw"]
+                nl = chr(10)
+                msg = ("Thư mục game này không có cnc-ddraw (ddraw.dll):" + nl + p + nl + nl +
+                       "AoE chạy bằng DirectDraw gốc của Windows rất chậm khi chơi nhiều người - trận với bot sẽ "
+                       "chậm và bot có thể rớt mạng." + nl + nl +
+                       (("Nên chọn bộ game có cnc-ddraw:" + nl + nl.join(others)) if others else
+                        "Nên chọn bộ game khác có cnc-ddraw (ví dụ bộ AoE-HD của XArena) bằng nút Chọn thư mục."))
+                self.log("WARNING: no cnc-ddraw in the game folder (other folders with it: %s)" % (others or "none"))
+                self.root.after(0, lambda m=msg: messagebox.showwarning(APP_TITLE, m))
         except Exception as e:  # noqa: BLE001
             self.log("game folder check failed: %r" % (e,))
         self.pool = orchestrator.BotPool(p, resource_path(os.path.join("bin", "aoehook.dll")), log=self.log)

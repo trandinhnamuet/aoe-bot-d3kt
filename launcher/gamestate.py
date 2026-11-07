@@ -1,6 +1,7 @@
 """Per-tick snapshot of the match as seen by one player (fog of war respected)."""
 import math
 import struct
+import time
 
 import aoemem as am
 
@@ -125,11 +126,20 @@ class Reader:
         self._tick = 0
 
     # ------------------------------------------------------------ static map data
-    def load_map(self):
-        w = self.g.world()
-        mp = self.m.u32(w + 0x28)
-        self.W = self.m.u32(mp + 8)
-        self.H = self.m.u32(mp + 0xC)
+    def load_map(self, timeout=60.0):
+        # (a slow match start - the cafe, 07/11 - left the map unread for a moment: None + int crashed two bots
+        #  five times in a row; wait for it)
+        t0 = time.time()
+        while True:
+            w = self.g.world()
+            mp = self.m.u32(w + 0x28) if w else None
+            self.W = self.m.u32(mp + 8) if mp else None
+            self.H = self.m.u32(mp + 0xC) if mp else None
+            if self.W and self.H and self.W <= 512 and self.H <= 512:
+                break
+            if time.time() - t0 > timeout:
+                raise RuntimeError("map not readable (world %s map %s size %s x %s)" % (w, mp, self.W, self.H))
+            time.sleep(0.25)
         tiles = self.m.u32(mp + 4)
         raw = self.m.read(tiles, self.W * self.H * 24) or b""
         # tile byte 5 = bits 0-4 terrain id + bits 5-7 ELEVATION (the whole byte was taken for the terrain id: on
