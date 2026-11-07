@@ -35,7 +35,7 @@ Ai chơi AoE 1 lâu năm đều biết máy (computer player) có sẵn trong ga
 ## 4. Cài và chơi
 
 1. Cần có sẵn game **AoE 1 Rise of Rome bản AoE-HD** trên máy (ví dụ bản cài qua XArena). Repo này **không** kèm game.
-2. Tải `AoESolo.zip` ở Releases, giải nén ở đâu cũng được, chạy `AoESolo.exe`.
+2. Tải `AoESolo.zip` ở Releases, giải nén ở đâu cũng được (ra thư mục `AoESolo`), chạy `AoESolo.exe` trong thư mục đó.
 3. Launcher **tự tìm thư mục game** (thư mục đã chọn lần trước, khoá registry do bộ cài game ghi — XArena ghi `C:\Program Files\XArena\Game\AoE-HD` —, các đường dẫn hay gặp, rồi dò nhanh các ổ đĩa). Không thấy thì bấm **"Chọn..."** để trỏ tới thư mục có `EMPIRESX.EXE`; lựa chọn được nhớ cho lần sau.
 4. Nếu thư mục game nằm trong `Program Files` (cần quyền admin để ghi), launcher hỏi để **chép bản game trên máy đó** sang `%LOCALAPPDATA%\AoESolo\AoE-HD` và dùng bản chép.
 5. Nhập tên, chọn số máy và phe, bấm "Chơi". Các bot chạy ẩn, không chiếm bàn phím, chuột. Khuyến nghị tốc độ x2, máy yếu nên để 1–4 bot.

@@ -2,6 +2,7 @@
 
     python tools/release.py <tag> <name> <notes.txt> <asset.zip> [--draft]
     e.g. python tools/release.py v1.2.24 "AoE Bot D3KT v1.2.24" notes.txt AoESolo.zip
+    python tools/release.py --replace-asset <tag> <asset.zip>     (new file for an existing release)
 
 Run it from the repo (the release points at HEAD, which must be pushed first)."""
 import json
@@ -28,7 +29,25 @@ def call(url, tok, data=None, method="GET", ctype="application/json"):
         return json.loads(r.read().decode("utf-8") or "{}")
 
 
+def replace_asset(tag, asset):
+    """Swaps the release's asset of the same name for a new file (the release and its notes stay)."""
+    tok = token()
+    rel = call("https://api.github.com/repos/%s/releases/tags/%s" % (REPO, tag), tok)
+    name = os.path.basename(asset)
+    for a in rel.get("assets", []):
+        if a.get("name") == name:
+            call("https://api.github.com/repos/%s/releases/assets/%d" % (REPO, a["id"]), tok, method="DELETE")
+            print("deleted old", name, a.get("size"))
+    up = rel["upload_url"].split("{")[0] + "?name=" + name
+    with open(asset, "rb") as f:
+        a = call(up, tok, f.read(), method="POST", ctype="application/zip")
+    print("asset", a.get("browser_download_url"), a.get("size"))
+    return 0
+
+
 def main(argv):
+    if len(argv) == 4 and argv[1] == "--replace-asset":
+        return replace_asset(argv[2], argv[3])
     if len(argv) < 5:
         print(__doc__)
         return 2
