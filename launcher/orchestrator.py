@@ -398,8 +398,9 @@ class Session:
             ths = [threading.Thread(target=self._try_join, args=(b, 2, True), daemon=True) for b in self.bots]
             for th in ths:
                 th.start()
+            t_j = time.time()
             for th in ths:
-                th.join(30)
+                th.join(max(0.1, 55 - (time.time() - t_j)))   # (a slow host: up to 2 x 23 s per bot, lobby.JOIN_PATIENCE)
             t1 = time.time()
             while time.time() - t1 < 3 and lobby.present_players(pl) < 1 + sum(
                     lobby.current_screen(b) == "MP Setup Screen" for b in self.bots):
@@ -461,7 +462,7 @@ class Session:
                     # sent again with a longer wait (3, 6, 9, 12 s). The old fallback clicked the civ list and the
                     # 'I'm Ready' toggle blind: on a slow machine it left every bot not ready on a concrete civ (net
                     # cafe 1v7 in one team, 06/11), and the civ list never reaches Random on a hidden bot (test 06/11)
-                    if not lobby.client_set_civ_team(b, slot, civ, team, host=pl, log=self.log, attempts=4):
+                    if not lobby.client_set_civ_team(b, slot, civ, team, host=pl, log=self.log, attempts=4, deadline=40):
                         self.log("slot %d: civ/team/ready not confirmed after 4 tries" % slot)
                 except Exception as e:  # noqa: BLE001
                     self.log("slot %d civ/team: %r" % (slot, e))

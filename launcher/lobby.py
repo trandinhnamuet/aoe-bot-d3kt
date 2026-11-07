@@ -422,7 +422,7 @@ def set_ready(gp, slot, want, host=None, timeout=4.0):
     return is_ready(side, slot) == want
 
 
-def client_set_civ_team(gp, slot, civ, team, host=None, log=print, timeout=3.0, attempts=3):
+def client_set_civ_team(gp, slot, civ, team, host=None, log=print, timeout=3.0, attempts=3, deadline=None):
     """Client: set civ + team in the screen's controls and send them with Ready (no dropdown opens).
     Confirmed on the host's side when `host` is given: ready AND the right civ / team there; otherwise the bot is
     made not ready (only if it is ready) and it goes again, with a longer wait each time (a slow machine with 8
@@ -431,22 +431,37 @@ def client_set_civ_team(gp, slot, civ, team, host=None, log=print, timeout=3.0, 
     t_all = time.time()
     if host is not None and is_ready(host, slot) and slot_civ(host, slot) == civ and slot_team(host, slot) == team + 1:
         return True                                   # already right: nothing to click
-    for attempt in range(attempts if host is not None else 1):
+    # (deadline: seconds for all attempts - a slow host blocks the bot's game thread in DirectPlay for 10 s and the
+    #  hook call times out: "err timeout" used to end the bot's setup there, not ready on a concrete civ - the cafe's
+    #  1v7 of 07/11 and the slow-host test; now that attempt only is lost)
+    t_end = t_all + deadline if deadline else None
+    attempt = -1
+    while True:
+        attempt += 1
+        if attempt >= (attempts if host is not None else 1) and not (t_end and time.time() < t_end - 2):
+            break
+        if t_end and time.time() > t_end:
+            break
         scr = gp.mem.u32(ADDR_SCREEN)
         if not scr or current_screen(gp) != "MP Setup Screen":
             return False
-        if host is not None and is_ready(host, slot) and not set_ready(gp, slot, False, host=host):
-            log("slot %d: could not un-ready (attempt %d)" % (slot, attempt + 1))
+        try:
+            if host is not None and is_ready(host, slot) and not set_ready(gp, slot, False, host=host):
+                log("slot %d: could not un-ready (attempt %d)" % (slot, attempt + 1))
+                continue
+            host_set_civ(gp, slot, civ, log=quiet)
+            host_set_team(gp, slot, team, log=quiet)
+            gp.mem.write(scr + SCR_MY_CIV_PENDING, int(civ).to_bytes(4, "little"))
+            gp.mem.write(scr + SCR_MY_TEAM_PENDING, int(team + 1).to_bytes(4, "little"))
+            _click(gp, LOBBY_READY_CLIENT, 0.1)
+        except RuntimeError as e:
+            log("slot %d: %r (attempt %d), again" % (slot, e, attempt + 1))
+            time.sleep(0.5)
             continue
-        host_set_civ(gp, slot, civ, log=quiet)
-        host_set_team(gp, slot, team, log=quiet)
-        gp.mem.write(scr + SCR_MY_CIV_PENDING, int(civ).to_bytes(4, "little"))
-        gp.mem.write(scr + SCR_MY_TEAM_PENDING, int(team + 1).to_bytes(4, "little"))
-        _click(gp, LOBBY_READY_CLIENT, 0.1)
         if host is None:
             return True
         t0 = time.time()
-        wait = timeout * (attempt + 1)
+        wait = timeout * min(attempt + 1, 4)
         while time.time() - t0 < wait:
             if is_ready(host, slot) and slot_civ(host, slot) == civ and slot_team(host, slot) == team + 1:
                 log("slot %d civ=%s team=%s (sent with Ready, %.1f s%s)" % (
@@ -482,8 +497,24 @@ def listed_sessions(gp):
     return gp.mem.u32(scr + SCR_SESSION_COUNT) if scr and current_screen(gp) == "Join Screen" else None
 
 
+JOIN_PATIENCE = 20.0
+
+
+def _wait_join(gp, timeout):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        sc = current_screen(gp)
+        if sc == "MP Setup Screen":
+            return True
+        if sc != "Join Screen":
+            return False
+        time.sleep(0.1)
+    return False
+
+
 def join_from_list(gp, log=print, retries=8):
     """A bot already waiting on the game list ('Join Screen') joins the first room."""
+    t_start = time.time()
     for attempt in range(retries):
         _click(gp, GAMES_SHOW, 0.05)            # returns once the session list is enumerated
         if listed_sessions(gp) == 0:
@@ -493,13 +524,16 @@ def join_from_list(gp, log=print, retries=8):
             continue
         _click(gp, GAMES_FIRST_ROW, 0.05)
         _click(gp, GAMES_JOIN, 0)
-        if wait_screen(gp, "MP Setup Screen", 3 if attempt < 3 else 6, poll=0.05):
+        # the room is listed and Join is pressed: wait for the room while the bot is still on the list (a slow host
+        # - the player's game on native DirectDraw at the cafe, 07/11 - took 3+ s; looking at the list again meanwhile
+        # broke the pending join: an error popup, then 20 s per bot). Never seen failing on 1200+ local joins.
+        if wait_screen(gp, ("MP Setup Screen",), 3, poll=0.05) or _wait_join(gp, JOIN_PATIENCE):
             n = None
             t0 = time.time()
             while not n and time.time() - t0 < 2:
                 n = my_player_number(gp)
                 time.sleep(0.05)
-            log("joined lobby as player %s (attempt %d)" % (n, attempt + 1))
+            log("joined lobby as player %s (attempt %d, %.1f s)" % (n, attempt + 1, time.time() - t_start))
             return n
         if current_screen(gp) != "Join Screen":
             raise RuntimeError("bot left the game list (screen=%s)" % current_screen(gp))
