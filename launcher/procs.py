@@ -66,7 +66,7 @@ class _PROCESS_INFORMATION(ctypes.Structure):
     _fields_ = [("hProcess", wt.HANDLE), ("hThread", wt.HANDLE), ("dwProcessId", wt.DWORD), ("dwThreadId", wt.DWORD)]
 
 
-def _start_on_desktop(args, cwd, desktop):
+def _start_on_desktop(args, cwd, desktop, env=None):
     """CreateProcess on another desktop (subprocess cannot set lpDesktop). Returns a Popen-like object."""
     import psutil
     si = _STARTUPINFOW()
@@ -79,7 +79,11 @@ def _start_on_desktop(args, cwd, desktop):
     _k32.CreateProcessW.argtypes = [wt.LPCWSTR, wt.LPWSTR, ctypes.c_void_p, ctypes.c_void_p, wt.BOOL, wt.DWORD,
                                     ctypes.c_void_p, wt.LPCWSTR, ctypes.POINTER(_STARTUPINFOW),
                                     ctypes.POINTER(_PROCESS_INFORMATION)]
-    if not _k32.CreateProcessW(None, cmd, None, None, False, 0, None, cwd, ctypes.byref(si), ctypes.byref(pi)):
+    block = None
+    if env is not None:                          # CREATE_UNICODE_ENVIRONMENT block "k=v\0...\0\0"
+        block = ctypes.create_unicode_buffer("".join("%s=%s\0" % kv for kv in sorted(env.items())) + "\0")
+    if not _k32.CreateProcessW(None, cmd, None, None, False, 0x400 if block is not None else 0, block, cwd,
+                               ctypes.byref(si), ctypes.byref(pi)):
         raise OSError("CreateProcess on desktop %s failed %d" % (desktop, ctypes.get_last_error()))
     _k32.CloseHandle(pi.hThread)
     _k32.CloseHandle(pi.hProcess)
@@ -144,17 +148,40 @@ def start(game_dir, exe, dll, hidden, log=print, timeout=40, job=True):
         # Only the current foreground process (the launcher) may change the foreground while locked.
         gw.user32.LockSetForegroundWindow(1)
     args = [os.path.join(game_dir, exe), "nostartup"] + (["nosound"] if hidden else [])
+    env = None
+    if os.path.normcase(os.path.dirname(os.path.abspath(args[0]))) != os.path.normcase(os.path.abspath(game_dir)):
+        # exe outside the game folder (botdir.py): the game's own DLLs (ExWE.dll, language.dll...) are found through
+        # PATH - the cafe's Windows does not search the working folder ("ExWE.dll was not found", 07/11, 1.2.27)
+        env = dict(os.environ)
+        env["PATH"] = os.path.abspath(game_dir) + os.pathsep + env.get("PATH", "")
     desk = gw.bot_desktop() if hidden and os.environ.get("AOESOLO_BOT_DESKTOP", "1") != "0" else None
-    if desk:
-        p = _start_on_desktop(args, game_dir, desk)
-    else:
-        si = subprocess.STARTUPINFO()
-        si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        si.wShowWindow = SW_HIDE if hidden else SW_SHOWNORMAL
-        p = subprocess.Popen(args, cwd=game_dir, startupinfo=si)
+    old_mode = None
+    if hidden:
+        # a bot that cannot start must not put a Windows "System Error" box in front of the player (the cafe's
+        # "ExWE.dll was not found", 07/11): SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX, inherited by the child
+        old_mode = _k32.SetErrorMode(0x8001)
+        _k32.SetErrorMode(old_mode | 0x8001)
+    try:
+        if desk:
+            p = _start_on_desktop(args, game_dir, desk, env)
+        else:
+            si = subprocess.STARTUPINFO()
+            si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            si.wShowWindow = SW_HIDE if hidden else SW_SHOWNORMAL
+            p = subprocess.Popen(args, cwd=game_dir, startupinfo=si, env=env)
+    finally:
+        if old_mode is not None:
+            _k32.SetErrorMode(old_mode)
     if hidden and job:
         _attach_to_job(p.pid)
-    hwnd = gw.main_window(p.pid, timeout)
+    t0 = time.time()
+    hwnd = None
+    while time.time() - t0 < timeout:
+        hwnd = gw.main_window(p.pid, 1.0)
+        if hwnd:
+            break
+        if p.poll() is not None:
+            raise RuntimeError("%s exited at start (a missing DLL?)" % exe)
     if not hwnd:
         p.kill()
         raise RuntimeError("game window did not appear for %s" % exe)

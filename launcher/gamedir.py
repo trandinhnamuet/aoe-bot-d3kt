@@ -20,10 +20,11 @@ APP_KEY = r"Software\AoESolo"
 AOE_KEYS = [r"SOFTWARE\WOW6432Node\Microsoft\Games\Age of Empires\1.00",
             r"SOFTWARE\Microsoft\Games\Age of Empires\1.00"]
 KNOWN_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47",       # AoE HD (XArena) - the addresses were found here
+              "7bb06b0cd465b2639cc90a10f12533ee002e3a0c",                               # the same code unsigned, data\empires.dat (cafe G:)
               "0a9c9bf528da8fd678abc5db0391436809a977d9"}       # AoE (AOE1R): same layout, only resolution patches
 HD, NORMAL = "AoE HD", "AoE thường (AOE1R)"
 EDITIONS = [HD, NORMAL]
-EDITION_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47": HD, "0a9c9bf528da8fd678abc5db0391436809a977d9": NORMAL}
+EDITION_SHA1 = {"0d10456e458e3487f99c814583ec37745507ce47": HD, "7bb06b0cd465b2639cc90a10f12533ee002e3a0c": HD, "0a9c9bf528da8fd678abc5db0391436809a977d9": NORMAL}
 EDITION_KEY = {HD: "GameDirHD", NORMAL: "GameDirNormal"}
 COMMON = [r"Program Files\XArena\Game\AoE-HD", r"Program Files (x86)\XArena\Game\AoE-HD",
           r"Program Files\XArena\Game\AOE1R", r"Program Files (x86)\XArena\Game\AOE1R",
