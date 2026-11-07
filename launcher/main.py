@@ -446,6 +446,13 @@ class App:
         gamedir.remember_edition(self.edition.get(), p)
         self.game_dir_var.set(p)
         self.log("game folder: %s (%s)" % (p, self.edition.get()))
+        try:
+            import botdir
+            self.log("game exe: %s, ddraw: %s, bots run from %s" % (
+                "known build" if gamedir.known_build(p) else "UNKNOWN build sha1 %s" % (gamedir._sha1(p) or "?")[:12],
+                botdir.ddraw_kind(p), botdir.bot_dir(p)))
+        except Exception as e:  # noqa: BLE001
+            self.log("game folder check failed: %r" % (e,))
         self.pool = orchestrator.BotPool(p, resource_path(os.path.join("bin", "aoehook.dll")), log=self.log)
         self.set_status("Sẵn sàng", T.GREEN)
         self.root.after(1500, self.warm_bots)
@@ -750,7 +757,7 @@ def check():
     for name in ("psutil", "winreg", "PIL", "PIL.ImageTk", "dplobby", "orchestrator", "lobby", "procs", "inject", "aoemem",
                  "gamedir", "gamestate", "d3kt", "pathing", "walling", "placement", "gamewin", "brainproc", "ui_theme", "updater", "version",
                  "brain.brain", "brain.plan", "brain.jobs", "brain.adapter", "brain.tasks.lure", "brain.tasks.herd",
-                 "certifi", "netssl"):
+                 "certifi", "netssl", "botdir"):
         try:
             __import__(name)
             out.append("ok   " + name)
@@ -762,7 +769,8 @@ def check():
         out.append("ok   update check")
     except Exception as e:  # noqa: BLE001
         out.append("FAIL update check: %r" % (e,))
-    for rel in (os.path.join("bin", "aoehook.dll"), os.path.join("bin", "dplaunch.exe")):
+    for rel in (os.path.join("bin", "aoehook.dll"), os.path.join("bin", "dplaunch.exe"),
+                os.path.join("bin", "cnc-ddraw", "ddraw.dll"), os.path.join("bin", "cnc-ddraw", "ddraw.ini")):
         out.append(("ok   " if os.path.exists(resource_path(rel)) else "FAIL missing ") + rel)
     with open(os.path.join(base_dir(), "check.log"), "w", encoding="utf-8") as f:
         f.write("\n".join(out) + "\n")

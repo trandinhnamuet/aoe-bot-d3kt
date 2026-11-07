@@ -5,6 +5,7 @@ import threading
 import time
 
 import aoemem
+import botdir
 import botnames
 import brainproc
 import d3kt
@@ -34,11 +35,20 @@ def bot_exe_bytes(src_bytes):
     return src_bytes
 
 
+def bot_exe(game_dir):
+    """Full path of the bots' exe: in the game folder, or in AoESolo's own folder when the game folder has no
+    cnc-ddraw (botdir.py)."""
+    return os.path.join(botdir.bot_dir(game_dir), BOT_EXE)
+
+
 def ensure_bot_exe(game_dir):
     """AOEBOT.EXE = the folder's EMPIRESX.EXE, patched to allow several instances when it is the normal
     build (the HD and the normal build have the same size, so the size alone does not tell a stale copy)."""
     src = os.path.join(game_dir, PLAYER_EXE)
-    dst = os.path.join(game_dir, BOT_EXE)
+    d = botdir.bot_dir(game_dir)
+    if os.path.normcase(os.path.abspath(d)) != os.path.normcase(os.path.abspath(game_dir)):
+        botdir.prepare_separate(game_dir, d, BOT_DDRAW)
+    dst = os.path.join(d, BOT_EXE)
     with open(src, "rb") as f:
         want = bot_exe_bytes(f.read())
     have = None
@@ -48,7 +58,8 @@ def ensure_bot_exe(game_dir):
     if have != want:
         with open(dst, "wb") as f:
             f.write(want)
-    ensure_bot_ddraw(game_dir)
+    if d == game_dir:
+        ensure_bot_ddraw(game_dir)
 
 
 BOT_DDRAW = """
@@ -100,6 +111,8 @@ class BotPool:
         self.lock = threading.Lock()
         self.parked = []          # GameProc waiting on "Join Screen"
         self.starting = 0
+        self.fail_streak = 0      # bot starts failed in a row; MAX_FAILS stops the pool until the next "Choi"
+        self.last_error = None
         try:
             ensure_bot_exe(game_dir)  # (warm-up started AOEBOT.EXE before the session made the copy)
         except OSError as e:
@@ -116,8 +129,12 @@ class BotPool:
         self.names_in_use.add(name)
         return 0, name
 
+    MAX_FAILS = 3
+
     def ensure(self, n):
         with self.lock:
+            if self.fail_streak >= self.MAX_FAILS:
+                return            # (the cafe, 07/11: a bot that never reached the menu was retried for 10 min)
             self.parked = [b for b in self.parked if b.alive()]
             missing = n - len(self.parked) - self.starting
             for _ in range(max(0, missing)):
@@ -126,13 +143,15 @@ class BotPool:
 
     def _start_one(self):
         name = None
+        gp = None
         try:
             with _reg_lock:                       # bots always run at 1366x768 (lobby coordinates)
                 saved = lobby.reg_get_dword(lobby.REG_SCREEN)
                 lobby.reg_set_dword(lobby.REG_SCREEN, 1366)
                 try:
-                    gp = procs.start(self.game_dir, BOT_EXE, self.dll, True, log=self.log)
-                    lobby.wait_screen(gp, "Main Menu", 60)
+                    gp = procs.start(self.game_dir, bot_exe(self.game_dir), self.dll, True, log=self.log)
+                    if not lobby.wait_screen(gp, "Main Menu", 90):
+                        raise RuntimeError("main menu not reached (screen=%s)" % lobby.current_screen(gp))
                 finally:
                     if saved is not None:
                         lobby.reg_set_dword(lobby.REG_SCREEN, saved)
@@ -147,20 +166,36 @@ class BotPool:
                 else:
                     self.parked.append(gp)
             self.log("bot %s parked (pid %d)" % (name, gp.pid))
+            with self.lock:
+                self.fail_streak = 0
         except Exception as e:
-            self.log("bot start failed: %r" % (e,))
-            if name:
-                with self.lock:
+            detail = ""
+            if gp is not None:
+                try:
+                    detail = " (pid %d, alive %s, screen %s, exe %s)" % (gp.pid, gp.alive(), lobby.current_screen(gp),
+                                                                      bot_exe(self.game_dir))
+                except Exception:  # noqa: BLE001
+                    pass
+                gp.kill()         # (a failed bot used to stay running, hidden, for good)
+            self.log("bot start failed: %r%s" % (e, detail))
+            with self.lock:
+                self.fail_streak += 1
+                self.last_error = e
+                if name:
                     self.names_in_use.discard(name)
         finally:
             with self.lock:
                 self.starting -= 1
 
     def take(self, n, timeout=90):
+        with self.lock:
+            self.fail_streak = 0 if self.fail_streak >= self.MAX_FAILS else self.fail_streak   # a new try per "Choi"
         self.ensure(n)
         t0 = time.time()
         while time.time() - t0 < timeout:
             with self.lock:
+                if self.fail_streak >= self.MAX_FAILS and not self.starting:
+                    raise RuntimeError("máy (bot) không khởi động được: %s" % (self.last_error,))
                 self.parked = [b for b in self.parked if b.alive()]
                 if len(self.parked) >= n:
                     got, self.parked = self.parked[:n], self.parked[n:]
@@ -169,6 +204,8 @@ class BotPool:
             if short > 0:
                 self.ensure(n)
             time.sleep(0.2)
+        if self.last_error is not None:
+            raise RuntimeError("bots were not ready in time (last bot error: %s)" % (self.last_error,))
         raise RuntimeError("bots were not ready in time")
 
     def release_names(self, bots):
@@ -322,7 +359,7 @@ class Session:
             with _reg_lock:
                 lobby.reg_set_dword(lobby.REG_SCREEN, cfg.resolution)
                 if self.test_hidden_player:
-                    pl = procs.start(self.game_dir, BOT_EXE, self.dll, True, log=self.log)
+                    pl = procs.start(self.game_dir, bot_exe(self.game_dir), self.dll, True, log=self.log)
                     lobby.host_create(pl, log=self.log)
                 else:
                     pl = self._start_player_room()

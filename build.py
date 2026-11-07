@@ -34,6 +34,9 @@ def build_exe():
          "--hidden-import", "psutil", "--hidden-import", "certifi", *data,
          "--add-binary", os.path.join(ROOT, "hook", "aoehook.dll") + os.pathsep + "bin",
          "--add-binary", os.path.join(ROOT, "hook", "dplaunch.exe") + os.pathsep + "bin",
+         "--add-binary", os.path.join(ROOT, "third_party", "cnc-ddraw", "ddraw.dll") + os.pathsep + "bin/cnc-ddraw",
+         "--add-data", os.path.join(ROOT, "third_party", "cnc-ddraw", "ddraw.ini") + os.pathsep + "bin/cnc-ddraw",
+         "--add-data", os.path.join(ROOT, "third_party", "cnc-ddraw", "LICENSE") + os.pathsep + "bin/cnc-ddraw",
          "--distpath", DIST, "--workpath", os.path.join(ROOT, "build"), "--specpath", os.path.join(ROOT, "build"),
          os.path.join(ROOT, "launcher", "main.py")], cwd=ROOT)
 
