@@ -34,7 +34,10 @@ def check(timeout=8):
     tag = rel.get("tag_name") or ""
     if parse(tag) <= parse(VERSION):
         return None
-    asset = next((a for a in rel.get("assets", []) if a.get("name", "").lower().endswith(".zip")), None)
+    # AoESolo.zip (exe + guide); never AoESolo-full.zip, whose Games folder an update must not unpack
+    zips = [a for a in rel.get("assets", []) if a.get("name", "").lower().endswith(".zip")]
+    asset = next((a for a in zips if a["name"].lower() == "aoesolo.zip"), None) or \
+        next((a for a in zips if "full" not in a["name"].lower()), None)
     if not asset:
         return None
     return {"version": tag.lstrip("vV"), "url": asset["browser_download_url"], "notes": rel.get("body") or "",
@@ -73,9 +76,10 @@ def swap(zip_path, exe_path):
                 if not b:
                     break
                 dst.write(b)
+        top = exe_name.rsplit("/", 1)[0] + "/" if "/" in exe_name else ""
         for n in names:
-            if n == exe_name or n.endswith("/"):
-                continue
+            if n == exe_name or n.endswith("/") or not n.startswith(top) or "/" in n[len(top):]:
+                continue        # only the files next to the exe (a Games folder in the zip is never unpacked)
             target = os.path.join(folder, os.path.basename(n))
             try:
                 with z.open(n) as src, open(target, "wb") as dst:

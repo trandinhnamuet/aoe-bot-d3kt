@@ -30,3 +30,9 @@ AoE-HD/
 # data learned from recordings of online games: holds other players' nicknames - kept local
 tools/learned/
 tools/remote_logs/
+
+# release zips (tools/package.py)
+AoESolo*.zip
+
+# ...except the Games folder of the full package (AoESolo-full.zip, 12/11: the owner's decision to ship it)
+!Games/**

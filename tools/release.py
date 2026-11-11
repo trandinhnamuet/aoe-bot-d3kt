@@ -1,6 +1,6 @@
 """GitHub release through the REST API with the token from `git credential fill` (never printed).
 
-    python tools/release.py <tag> <name> <notes.txt> <asset.zip> [--draft]
+    python tools/release.py <tag> <name> <notes.txt> <asset.zip> [more.zip ...] [--draft]
     e.g. python tools/release.py v1.2.24 "AoE Bot D3KT v1.2.24" notes.txt AoESolo.zip
     python tools/release.py --replace-asset <tag> <asset.zip>     (new file for an existing release)
 
@@ -51,7 +51,7 @@ def main(argv):
     if len(argv) < 5:
         print(__doc__)
         return 2
-    tag, name, notes_path, asset = argv[1:5]
+    tag, name, notes_path = argv[1:4]
     tok = token()
     sha = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
     with open(notes_path, encoding="utf-8") as f:
@@ -60,10 +60,11 @@ def main(argv):
                {"tag_name": tag, "target_commitish": sha, "name": name, "body": body,
                 "draft": "--draft" in argv, "prerelease": False}, method="POST")
     print("release", rel.get("html_url"))
-    up = rel["upload_url"].split("{")[0] + "?name=" + os.path.basename(asset)
-    with open(asset, "rb") as f:
-        a = call(up, tok, f.read(), method="POST", ctype="application/zip")
-    print("asset", a.get("browser_download_url"), a.get("size"))
+    for path in [x for x in argv[4:] if not x.startswith("--")]:     # in order: AoESolo.zip first (updater)
+        up = rel["upload_url"].split("{")[0] + "?name=" + os.path.basename(path)
+        with open(path, "rb") as f:
+            a = call(up, tok, f.read(), method="POST", ctype="application/zip")
+        print("asset", a.get("browser_download_url"), a.get("size"))
     return 0
 
 

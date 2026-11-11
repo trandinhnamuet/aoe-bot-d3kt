@@ -82,6 +82,16 @@ def candidates(base_dir):
                 seen.append(p)
     add(remembered())
     add(os.path.join(base_dir, "AoE-HD"))
+    # the full package (AoESolo-full.zip, 12/11) ships a Games folder next to AoESolo.exe: the game is in it or
+    # in one of its subfolders
+    games = os.path.join(base_dir, "Games")
+    add(games)
+    try:
+        for n in sorted(os.listdir(games)):
+            if os.path.isdir(os.path.join(games, n)):
+                add(os.path.join(games, n))
+    except OSError:
+        pass
     add(base_dir)
     if winreg is not None:
         for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):

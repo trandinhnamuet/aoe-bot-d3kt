@@ -1,0 +1,1 @@
+call dism /Online /enable-feature /FeatureName:"DirectPlay" /All

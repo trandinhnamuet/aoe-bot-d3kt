@@ -1,6 +1,7 @@
 AoESolo - AI danh AoE 1 theo luat D3KT
 
-1. Can co san game AoE 1 Rise of Rome ban AoE-HD tren may (vi du ban cai qua XArena). Goi nay KHONG kem game.
+1. AoESolo-full.zip: kem san game trong thu muc Games, launcher tu dung game do.
+   AoESolo.zip: KHONG kem game, can co san AoE 1 Rise of Rome ban AoE-HD tren may (vi du ban cai qua XArena).
 2. Giai nen o dau cung duoc (ra thu muc AoESolo), chay AoESolo.exe trong thu muc do.
 3. Launcher tu tim thu muc game (registry cua bo cai, C:\Program Files\XArena\Game\AoE-HD, cac o dia...).
    Khong thay thi bam "Chon..." va tro toi thu muc co EMPIRESX.EXE.
