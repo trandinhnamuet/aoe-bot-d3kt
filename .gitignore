@@ -34,5 +34,5 @@ tools/remote_logs/
 # release zips (tools/package.py)
 AoESolo*.zip
 
-# ...except the Games folder of the full package (AoESolo-full.zip, 12/11: the owner's decision to ship it)
+# ...except the Games folder of the full package (AoESolo_full.zip, 12/11: the owner's decision to ship it)
 !Games/**

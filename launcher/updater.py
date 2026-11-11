@@ -34,7 +34,7 @@ def check(timeout=8):
     tag = rel.get("tag_name") or ""
     if parse(tag) <= parse(VERSION):
         return None
-    # AoESolo.zip (exe + guide); never AoESolo-full.zip, whose Games folder an update must not unpack
+    # AoESolo.zip (exe + guide); never AoESolo_full.zip, whose Games folder an update must not unpack
     zips = [a for a in rel.get("assets", []) if a.get("name", "").lower().endswith(".zip")]
     asset = next((a for a in zips if a["name"].lower() == "aoesolo.zip"), None) or \
         next((a for a in zips if "full" not in a["name"].lower()), None)

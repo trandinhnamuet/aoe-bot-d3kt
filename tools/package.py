@@ -1,12 +1,13 @@
 """The release zips, each with one folder AoESolo\\ so extracting gives a folder instead of loose files (07/11):
 
     AoESolo.zip       AoESolo.exe + HUONG_DAN.txt (the in-app updater downloads this one)
-    AoESolo-full.zip  the same + the Games folder (the game, next to AoESolo.exe: the launcher finds it there; 12/11)
+    AoESolo_full.zip  the same + the Games folder (the game, next to AoESolo.exe: the launcher finds it there; 12/11)
 
     python tools/package.py [out_dir]        (default: the repo root, from dist\\AoESolo\\AoESolo.exe)
 
 launcher/updater.py takes AoESolo.zip and its entry ending in AoESolo.exe. Older launchers take the first .zip
-asset of the release and write every other entry by its base name - so AoESolo.zip must be uploaded FIRST and
+asset as GitHub lists it (by name: "AoESolo-x" sorts before "AoESolo.zip", "AoESolo_x" after) and write every
+other entry by its base name - so the full zip is named AoESolo_full.zip and AoESolo.zip
 must never hold the Games folder."""
 import os
 import sys
@@ -42,9 +43,9 @@ def main(argv):
     out_dir = argv[1] if len(argv) > 1 else ROOT
     write(os.path.join(out_dir, "AoESolo.zip"), False)
     if os.path.isdir(GAMES):
-        write(os.path.join(out_dir, "AoESolo-full.zip"), True)
+        write(os.path.join(out_dir, "AoESolo_full.zip"), True)
     else:
-        print("no Games folder: AoESolo-full.zip skipped")
+        print("no Games folder: AoESolo_full.zip skipped")
     return 0
 
 

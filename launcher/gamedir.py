@@ -82,7 +82,7 @@ def candidates(base_dir):
                 seen.append(p)
     add(remembered())
     add(os.path.join(base_dir, "AoE-HD"))
-    # the full package (AoESolo-full.zip, 12/11) ships a Games folder next to AoESolo.exe: the game is in it or
+    # the full package (AoESolo_full.zip, 12/11) ships a Games folder next to AoESolo.exe: the game is in it or
     # in one of its subfolders
     games = os.path.join(base_dir, "Games")
     add(games)
